@@ -5,6 +5,11 @@ import { Router } from '@angular/router';
 import { ProjectService, Project, Document } from '../../services/project.service';
 import { TextService, UserText } from '../../services/text.service';
 import { SafeUrlPipe } from '../../pipes/safe-url.pipe';
+import { QuillModule } from 'ngx-quill';
+import 'quill/dist/quill.core.css';
+import 'quill/dist/quill.snow.css';
+import 'quill/dist/quill.bubble.css';
+import { QUILL_CONFIG_TOKEN } from 'ngx-quill';
 
 interface ProjectWithStats extends Project {
   documentCount: number;
@@ -13,7 +18,27 @@ interface ProjectWithStats extends Project {
 @Component({
   selector: 'app-project-list',
   standalone: true,
-  imports: [CommonModule, FormsModule, SafeUrlPipe],
+  imports: [CommonModule, FormsModule, SafeUrlPipe, QuillModule],
+  providers: [{
+    provide: QUILL_CONFIG_TOKEN,
+    useValue: {
+      modules: {
+        toolbar: [
+          ['bold', 'italic', 'underline', 'strike'],
+          ['blockquote', 'code-block'],
+          [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+          [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+          [{ 'indent': '-1'}, { 'indent': '+1' }],
+          [{ 'direction': 'rtl' }],
+          [{ 'align': [] }],
+          [{ 'color': [] }, { 'background': [] }],
+          ['link', 'image'],
+          ['clean']
+        ]
+      },
+      theme: 'snow'
+    }
+  }],
   template: `
     <div class="min-h-screen bg-gray-50 flex">
       <!-- Two-level Sidebar -->
@@ -108,22 +133,28 @@ interface ProjectWithStats extends Project {
             </div>
           </div>
 
-          <!-- Text Viewer -->
-          <div *ngIf="selectedText" class="bg-white rounded-lg shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4">
-              <h3 class="text-xl font-bold">{{selectedText.title}}</h3>
-              <div class="space-x-2">
-                <button (click)="editText(selectedText)"
-                        class="text-blue-500 hover:text-blue-700">
-                  Edit
-                </button>
+          <!-- Text Viewer with professional rich text editor -->
+          <div *ngIf="selectedText" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
+            <div class="flex justify-between items-center p-4 bg-white border-b">
+              <input [(ngModel)]="selectedText.title" 
+                     (ngModelChange)="autoSaveText()"
+                     class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
+                     [class.border-gray-300]="selectedText.title === ''">
+              <div class="space-x-2 flex-shrink-0">
                 <button (click)="deleteText(selectedText.id)"
-                        class="text-red-500 hover:text-red-700">
+                        class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
+                  <i class="pi pi-trash mr-1"></i>
                   Delete
                 </button>
               </div>
             </div>
-            <p class="text-gray-600 whitespace-pre-wrap">{{selectedText.content}}</p>
+            <div class="flex-1 relative">
+              <quill-editor [(ngModel)]="selectedText.content"
+                            (ngModelChange)="autoSaveText()"
+                            [styles]="{height: '100%'}"
+                            class="h-full editor-container">
+              </quill-editor>
+            </div>
           </div>
 
           <!-- Chat Interface -->
@@ -288,7 +319,65 @@ interface ProjectWithStats extends Project {
       </div>
     </div>
   `,
-  styles: []
+  styles: [`
+    :host ::ng-deep .editor-container {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    :host ::ng-deep .ql-container {
+      font-size: 1.1rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+
+    :host ::ng-deep .ql-toolbar {
+      border: none;
+      padding: 12px;
+      background: white;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    :host ::ng-deep .ql-editor {
+      flex: 1;
+      padding: 2rem;
+      font-size: 1.1rem;
+      line-height: 1.6;
+      background: white;
+    }
+
+    :host ::ng-deep .ql-editor p {
+      margin-bottom: 1rem;
+    }
+
+    :host ::ng-deep .ql-snow .ql-toolbar button,
+    :host ::ng-deep .ql-snow .ql-picker {
+      height: 24px;
+    }
+
+    :host ::ng-deep .ql-snow .ql-toolbar button:hover,
+    :host ::ng-deep .ql-snow .ql-toolbar button.ql-active {
+      color: #3b82f6;
+    }
+
+    :host ::ng-deep .ql-snow .ql-toolbar button:hover .ql-stroke,
+    :host ::ng-deep .ql-snow .ql-toolbar button.ql-active .ql-stroke {
+      stroke: #3b82f6;
+    }
+
+    :host ::ng-deep .ql-snow .ql-toolbar button:hover .ql-fill,
+    :host ::ng-deep .ql-snow .ql-toolbar button.ql-active .ql-fill {
+      fill: #3b82f6;
+    }
+
+    :host ::ng-deep .ql-container.ql-snow {
+      border: none;
+      height: 100%;
+    }
+  `]
 })
 export class ProjectListComponent implements OnInit {
   projects: Project[] = [];
@@ -657,6 +746,27 @@ export class ProjectListComponent implements OnInit {
     const index = this.selectedItems.indexOf(id);
     if (index !== -1) {
       this.selectedItems.splice(index, 1);
+    }
+  }
+
+  autoSaveText(): void {
+    if (this.selectedText && this.selectedProject) {
+      this.textService.updateText(
+        this.selectedText.id,
+        this.selectedText.title,
+        this.selectedText.content,
+        [this.selectedProject.id]
+      ).subscribe({
+        next: (updatedText) => {
+          const index = this.projectTexts.findIndex(t => t.id === updatedText.id);
+          if (index !== -1) {
+            this.projectTexts[index] = updatedText;
+          }
+        },
+        error: (error) => {
+          console.error('Error updating text:', error);
+        }
+      });
     }
   }
 } 
