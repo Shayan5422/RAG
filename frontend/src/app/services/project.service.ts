@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
+import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
 export interface Project {
@@ -8,12 +8,15 @@ export interface Project {
   description: string;
   created_at: string;
   updated_at: string;
+  user_id?: number;
 }
 
 export interface Document {
   id: number;
   name: string;
+  content?: string;
   file_path: string;
+  project_id: number;
   created_at: string;
   updated_at: string;
 }

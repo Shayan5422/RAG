@@ -4,12 +4,11 @@ import { RouterModule, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ProjectService, Project } from './services/project.service';
 import { TextService, UserText } from './services/text.service';
-import { SafeUrlPipe } from './pipes/safe-url.pipe';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterModule, FormsModule, SafeUrlPipe],
+  imports: [CommonModule, RouterModule, FormsModule],
   template: `
     <!-- Navigation Bar -->
     <nav class="bg-white shadow-lg">
