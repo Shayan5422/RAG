@@ -1,25 +1,30 @@
 import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
-import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
-import { RouterModule } from '@angular/router';
+import { HttpClientModule } from '@angular/common/http';
+import { FormsModule } from '@angular/forms';
+import { RouterModule, Routes } from '@angular/router';
 
 import { AppComponent } from './app.component';
-import { AuthInterceptor } from './interceptors/auth.interceptor';
-import { routes } from './app.routes';
+import { ProjectListComponent } from './components/project-list/project-list.component';
+import { ProjectDetailComponent } from './components/project-detail/project-detail.component';
+
+const routes: Routes = [
+  { path: '', redirectTo: '/projects', pathMatch: 'full' },
+  { path: 'projects', component: ProjectListComponent },
+  { path: 'projects/:id', component: ProjectDetailComponent }
+];
 
 @NgModule({
   imports: [
     BrowserModule,
     HttpClientModule,
-    RouterModule.forRoot(routes)
+    FormsModule,
+    RouterModule.forRoot(routes),
+    AppComponent,
+    ProjectListComponent,
+    ProjectDetailComponent
   ],
-  providers: [
-    {
-      provide: HTTP_INTERCEPTORS,
-      useClass: AuthInterceptor,
-      multi: true
-    }
-  ],
+  providers: [],
   bootstrap: [AppComponent]
 })
 export class AppModule { } 

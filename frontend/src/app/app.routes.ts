@@ -1,5 +1,7 @@
 import { Routes } from '@angular/router';
 import { AuthGuard } from './guards/auth.guard';
+import { ProjectListComponent } from './components/project-list/project-list.component';
+import { ProjectDetailComponent } from './components/project-detail/project-detail.component';
 
 export const routes: Routes = [
   {
@@ -25,6 +27,16 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/chat/chat.component').then(m => m.ChatComponent),
     canActivate: [AuthGuard]
   },
-  { path: '', redirectTo: '/upload', pathMatch: 'full' },
-  { path: '**', redirectTo: '/upload' }
+  {
+    path: 'projects',
+    component: ProjectListComponent,
+    canActivate: [AuthGuard]
+  },
+  {
+    path: 'projects/:id',
+    component: ProjectDetailComponent,
+    canActivate: [AuthGuard]
+  },
+  { path: '', redirectTo: '/projects', pathMatch: 'full' },
+  { path: '**', redirectTo: '/login' }
 ];
