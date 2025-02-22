@@ -11,4 +11,8 @@ faiss-cpu==1.7.4
 PyPDF2==3.0.1
 pdfplumber==0.10.3
 pdf2image==1.16.3
-pytesseract==0.3.10 
+pytesseract==0.3.10
+python-jose[cryptography]
+passlib[bcrypt]
+sqlalchemy
+pydantic[email] 

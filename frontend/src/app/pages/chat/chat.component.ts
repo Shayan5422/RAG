@@ -6,6 +6,8 @@ import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { AvatarModule } from 'primeng/avatar';
 import { RagService } from '../../services/rag.service';
+import { ChatService } from '../../services/chat.service';
+import { ActivatedRoute } from '@angular/router';
 
 interface Message {
   content: string;
@@ -25,72 +27,44 @@ interface Message {
     AvatarModule
   ],
   template: `
-    <div class="min-h-screen bg-gray-50">
-      <div class="container py-8">
-        <div class="max-w-4xl mx-auto">
-          <div class="card mb-4">
-            <div class="flex items-center gap-4 mb-6">
-              <i class="pi pi-comments text-2xl text-primary-600"></i>
-              <h2 class="text-2xl font-bold text-gray-900">Chat with Your Documents</h2>
-            </div>
+    <div class="container mx-auto px-4 py-8">
+      <div class="max-w-4xl mx-auto">
+        <div class="bg-white rounded-lg shadow-lg p-6">
+          <h2 class="text-2xl font-bold mb-6">Chat with Document</h2>
+          
+          <div class="mb-6" *ngIf="selectedDocument">
+            <p class="text-gray-600">Selected document: {{ selectedDocument }}</p>
+          </div>
 
-            <!-- Chat Messages -->
-            <div class="bg-white rounded-lg p-4 h-[500px] overflow-y-auto mb-4 border border-gray-200">
-              <div class="space-y-4">
-                @for (message of messages; track message) {
-                  <div [class]="message.isUser ? 'flex justify-end' : 'flex justify-start'">
-                    <div [class]="message.isUser ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-900'"
-                         class="max-w-[80%] rounded-lg px-4 py-2">
-                      @if (!message.isUser) {
-                        <div class="flex items-center gap-2 mb-1">
-                          <p-avatar icon="pi pi-robot" shape="circle" size="normal" styleClass="bg-primary-200"></p-avatar>
-                          <span class="text-sm font-medium">AI Assistant</span>
-                        </div>
-                      }
-                      <p class="whitespace-pre-wrap">{{ message.content }}</p>
-                      <div [class]="message.isUser ? 'text-primary-200' : 'text-gray-500'"
-                           class="text-xs mt-1">
-                        {{ message.timestamp | date:'shortTime' }}
-                      </div>
-                    </div>
-                  </div>
-                }
-              </div>
-            </div>
-
-            <!-- Input Area -->
-            <div class="flex gap-2">
-              <textarea pInputTextarea
-                        [(ngModel)]="newMessage"
-                        placeholder="Type your message..."
-                        class="flex-1 w-full"
-                        [rows]="1"
-                        [autoResize]="true"
-                        (keydown.enter)="onEnter($event)">
-              </textarea>
-              <button pButton
-                      icon="pi pi-send"
-                      [disabled]="!newMessage.trim()"
-                      (click)="sendMessage()"
-                      class="p-button-primary">
-                Send
-              </button>
+          <div class="space-y-4 mb-6">
+            <div *ngFor="let message of chatHistory" class="p-4 rounded-lg" 
+                [ngClass]="{'bg-gray-100': message.isUser, 'bg-blue-50': !message.isUser}">
+              <p class="font-semibold mb-2">{{ message.isUser ? 'You' : 'AI' }}</p>
+              <p class="text-gray-700">{{ message.text }}</p>
             </div>
           </div>
 
-          <!-- Document Context -->
-          <div class="card">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Active Documents</h3>
-            <div class="space-y-2">
-              @for (doc of activeDocuments; track doc) {
-                <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div class="flex items-center gap-3">
-                    <i class="pi pi-file text-primary-600"></i>
-                    <span class="text-gray-700">{{ doc }}</span>
-                  </div>
-                </div>
-              }
-            </div>
+          <div *ngIf="error" class="mb-4 p-4 bg-red-50 text-red-700 rounded-lg">
+            {{ error }}
+          </div>
+
+          <div class="flex space-x-4">
+            <textarea
+              pTextarea
+              [(ngModel)]="currentMessage"
+              [rows]="3"
+              placeholder="Type your message here..."
+              class="flex-grow p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            ></textarea>
+            <button
+              pButton
+              type="button"
+              [disabled]="!currentMessage.trim() || isLoading"
+              (click)="sendMessage()"
+              class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              {{ isLoading ? 'Sending...' : 'Send' }}
+            </button>
           </div>
         </div>
       </div>
@@ -99,72 +73,48 @@ interface Message {
   styles: []
 })
 export class ChatComponent implements OnInit {
-  messages: Message[] = [
-    {
-      content: "Hello! I'm your document assistant. I can help you understand and analyze your uploaded documents. What would you like to know?",
-      isUser: false,
-      timestamp: new Date()
-    }
-  ];
+  selectedDocument: string | null = null;
+  currentMessage: string = '';
+  chatHistory: Array<{ text: string; isUser: boolean }> = [];
+  isLoading: boolean = false;
+  error: string | null = null;
 
-  activeDocuments: string[] = [];
-  newMessage = '';
-
-  constructor(private ragService: RagService) {}
+  constructor(
+    private chatService: ChatService,
+    private route: ActivatedRoute
+  ) {}
 
   ngOnInit() {
-    this.loadActiveDocuments();
-  }
-
-  loadActiveDocuments() {
-    this.ragService.getActiveDocuments().subscribe({
-      next: (documents) => {
-        this.activeDocuments = documents;
-      },
-      error: (error) => {
-        console.error('Failed to load documents:', error);
-      }
+    this.route.queryParams.subscribe(params => {
+      this.selectedDocument = params['document'];
     });
   }
 
   sendMessage() {
-    if (!this.newMessage.trim()) return;
+    if (!this.currentMessage.trim() || this.isLoading) return;
 
-    // Add user message
-    this.messages.push({
-      content: this.newMessage,
-      isUser: true,
-      timestamp: new Date()
-    });
+    this.isLoading = true;
+    this.error = null;
+    const messageText = this.currentMessage;
+    this.chatHistory.push({ text: messageText, isUser: true });
+    this.currentMessage = '';
 
-    const messageToSend = this.newMessage;
-    this.newMessage = '';
-
-    // Send to backend
-    this.ragService.sendMessage(messageToSend).subscribe({
+    this.chatService.sendMessage({ message: messageText }).subscribe({
       next: (response) => {
-        this.messages.push({
-          content: response.answer,
-          isUser: false,
-          timestamp: new Date()
-        });
+        this.chatHistory.push({ text: response.answer, isUser: false });
+        this.isLoading = false;
       },
       error: (error) => {
-        this.messages.push({
-          content: 'Sorry, I encountered an error while processing your request. Please try again.',
-          isUser: false,
-          timestamp: new Date()
-        });
         console.error('Chat error:', error);
+        this.isLoading = false;
+        if (error.status === 401) {
+          this.error = 'Your session has expired. Please log in again.';
+        } else if (error.status === 0) {
+          this.error = 'Unable to connect to server. Please check your connection.';
+        } else {
+          this.error = 'An error occurred while sending your message. Please try again.';
+        }
       }
     });
-  }
-
-  onEnter(event: Event) {
-    const keyboardEvent = event as KeyboardEvent;
-    if (!keyboardEvent.shiftKey) {
-      event.preventDefault();
-      this.sendMessage();
-    }
   }
 } 
