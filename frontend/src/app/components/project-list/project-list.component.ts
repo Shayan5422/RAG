@@ -99,14 +99,20 @@ interface ProjectWithStats extends Project {
 
         <!-- Action Buttons -->
         <div class="p-4 border-t flex-shrink-0" *ngIf="selectedProject">
-          <div class="space-y-2">
+          <div class="grid grid-cols-2 gap-2">
             <button (click)="showCreateText = true"
-                    class="w-full bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center justify-center">
-              <i class="pi pi-file mr-2"></i>New Text
+                    class="bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center group relative">
+              <i class="pi pi-file-edit text-xl"></i>
+              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                New Text
+              </span>
             </button>
             <button (click)="showUploadFile = true"
-                    class="w-full bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600 flex items-center justify-center">
-              <i class="pi pi-upload mr-2"></i>Upload File
+                    class="bg-purple-500 text-white p-3 rounded-lg hover:bg-purple-600 flex items-center justify-center group relative">
+              <i class="pi pi-upload text-xl"></i>
+              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                Upload File
+              </span>
             </button>
           </div>
         </div>
@@ -123,13 +129,22 @@ interface ProjectWithStats extends Project {
         <!-- Content Area -->
         <ng-container *ngIf="selectedProject">
           <!-- Document Viewer -->
-          <div *ngIf="selectedDocument" class="bg-white rounded-lg shadow-sm p-6">
-            <div class="flex justify-between items-center mb-4">
+          <div *ngIf="selectedDocument" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
+            <div class="flex justify-between items-center p-4 bg-white border-b">
               <h3 class="text-xl font-bold">{{selectedDocument.name}}</h3>
-              <button (click)="viewDocument(selectedDocument)"
-                      class="text-blue-500 hover:text-blue-700">
-                Open PDF
-              </button>
+              <div class="space-x-2">
+                <a [href]="getPdfUrl(selectedDocument)" 
+                   target="_blank" 
+                   class="text-blue-500 hover:text-blue-700">
+                  <i class="pi pi-external-link mr-1"></i>
+                  Open in New Tab
+                </a>
+              </div>
+            </div>
+            <div class="flex-1 bg-gray-100">
+              <iframe [src]="getPdfUrl(selectedDocument) | safeUrl" 
+                     class="w-full h-full"
+                     type="application/pdf"></iframe>
             </div>
           </div>
 
@@ -282,42 +297,6 @@ interface ProjectWithStats extends Project {
         </div>
       </div>
     </div>
-
-    <!-- PDF Viewer Modal -->
-    <div *ngIf="showPdfViewer" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div class="bg-white rounded-lg p-6 w-full max-w-4xl h-[90vh] flex flex-col">
-        <div class="flex justify-between items-center mb-4">
-          <div>
-            <h2 class="text-xl font-bold">{{viewingDocument?.name}}</h2>
-            <p class="text-sm text-gray-500">{{pdfUrl}}</p>
-          </div>
-          <div class="flex items-center gap-2">
-            <a [href]="pdfUrl" 
-               target="_blank" 
-               class="text-blue-500 hover:text-blue-700">
-              Open in New Tab
-            </a>
-            <button (click)="showPdfViewer = false"
-                    class="text-gray-500 hover:text-gray-700">
-              Close
-            </button>
-          </div>
-        </div>
-        <div class="flex-1 bg-gray-100 relative">
-          <iframe [src]="pdfUrl | safeUrl" 
-                  class="w-full h-full"
-                  *ngIf="pdfUrl"
-                  (error)="handlePdfError($event)"
-                  type="application/pdf"></iframe>
-          <div *ngIf="!pdfUrl" class="absolute inset-0 flex items-center justify-center">
-            <div class="text-center">
-              <p class="text-gray-500 mb-2">Unable to load PDF file.</p>
-              <p class="text-sm text-gray-400">Try opening the file in a new tab.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
   `,
   styles: [`
     :host ::ng-deep .editor-container {
@@ -394,10 +373,6 @@ export class ProjectListComponent implements OnInit {
   projectDocuments: Document[] = [];
   showUploadFile = false;
   selectedFile: File | null = null;
-
-  showPdfViewer = false;
-  viewingDocument: Document | null = null;
-  pdfUrl: string = '';
 
   activeTab = 'chat';
   question = '';
@@ -595,32 +570,6 @@ export class ProjectListComponent implements OnInit {
     });
   }
 
-  viewDocument(doc: Document): void {
-    this.viewingDocument = doc;
-    const baseUrl = 'http://localhost:8000';
-    const filePath = doc.file_path.startsWith('/') ? doc.file_path : `/${doc.file_path}`;
-    this.pdfUrl = `${baseUrl}${filePath}`;
-    this.showPdfViewer = true;
-    
-    console.log('Opening PDF URL:', this.pdfUrl);
-    
-    fetch(this.pdfUrl)
-      .then(response => {
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        console.log('PDF is accessible');
-      })
-      .catch(error => {
-        console.error('Error accessing PDF:', error);
-        this.handlePdfError(error);
-      });
-  }
-
-  deleteDocument(id: number): void {
-    // Implement document deletion
-  }
-
   askQuestion(): void {
     if (!this.selectedProject || !this.question) return;
 
@@ -657,12 +606,6 @@ export class ProjectListComponent implements OnInit {
         this.toggleText(item);
       }
     }
-  }
-
-  handlePdfError(event: any): void {
-    console.error('Error loading PDF:', event);
-    this.pdfUrl = '';
-    alert('Unable to load the PDF file. Please make sure the file exists and is accessible.');
   }
 
   toggleDocument(doc: Document): void {
@@ -768,5 +711,11 @@ export class ProjectListComponent implements OnInit {
         }
       });
     }
+  }
+
+  getPdfUrl(doc: Document): string {
+    const baseUrl = 'http://localhost:8000';
+    const filePath = doc.file_path.startsWith('/') ? doc.file_path : `/${doc.file_path}`;
+    return `${baseUrl}${filePath}`;
   }
 } 
