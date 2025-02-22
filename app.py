@@ -9,9 +9,11 @@ import os
 import shutil
 from pathlib import Path
 import tempfile
-from datetime import timedelta
+from datetime import timedelta, datetime
 from sqlalchemy.orm import Session
 from typing import List
+import requests
+import base64
 
 from extract_text import extract_text_from_pdf
 from embeding import (
@@ -67,6 +69,10 @@ templates = Jinja2Templates(directory="templates")
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Create audio uploads directory if it doesn't exist
+AUDIO_UPLOAD_DIR = Path("audio_uploads")
+AUDIO_UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Custom StaticFiles class to add CORS headers
 class CustomStaticFiles(StaticFiles):
@@ -1104,6 +1110,191 @@ async def get_text_shared_users(
     ).all()
     
     return shared_users
+
+# Audio transcription endpoint
+@app.post("/transcribe-audio")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Create a unique filename with timestamp
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        filename = f"recording_{timestamp}.wav"
+        file_path = AUDIO_UPLOAD_DIR / filename
+        
+        # Save the file
+        try:
+            with file_path.open("wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        except Exception as e:
+            logger.error(f"Error saving audio file: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to save audio file")
+
+        # Read the file as binary
+        try:
+            with open(file_path, "rb") as audio_file:
+                audio_content = audio_file.read()
+                audio_base64 = base64.b64encode(audio_content).decode('utf-8')
+        except Exception as e:
+            logger.error(f"Error reading audio file: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to read audio file")
+
+        # Send to external transcription service
+        try:
+            # First get the token
+            auth_response = requests.post(
+                'http://backend.shaz.ai/token/',
+                data={
+                    'username': 'admin',
+                    'password': '1234'
+                }
+            )
+            
+            if auth_response.status_code != 200:
+                logger.error(f"Authentication error: {auth_response.text}")
+                raise HTTPException(
+                    status_code=auth_response.status_code,
+                    detail=f"Authentication failed: {auth_response.text}"
+                )
+            
+            token = auth_response.json().get('access_token')
+            if not token:
+                raise HTTPException(
+                    status_code=500,
+                    detail="No token received from authentication service"
+                )
+
+            # Now send the transcription request with the token
+            headers = {
+                'Authorization': f'Bearer {token}'
+            }
+            
+            # Generate a unique session ID
+            session_id = f"session_{timestamp}"
+            
+            # Prepare the request data as form data
+            files = {
+                'file': ('chunk.wav', audio_content, 'audio/wav')
+            }
+            data = {
+                'chunk_number': '1',
+                'session_id': session_id,
+                'model': 'openai/whisper-large-v3-turbo'  # Add default model
+            }
+
+            # Use the process-chunk endpoint
+            response = requests.post(
+                'http://backend.shaz.ai/process-chunk/',
+                files=files,
+                data=data,
+                headers=headers,
+                timeout=30
+            )
+
+            # Log the response for debugging
+            logger.info(f"Transcription service response status: {response.status_code}")
+            logger.info(f"Transcription service response headers: {response.headers}")
+            try:
+                logger.info(f"Transcription service response body: {response.json()}")
+            except:
+                logger.info(f"Transcription service raw response: {response.text}")
+
+            if response.status_code != 200:
+                error_detail = "Unknown error"
+                try:
+                    error_response = response.json()
+                    if isinstance(error_response, dict):
+                        error_detail = error_response.get('detail', error_response)
+                except:
+                    error_detail = response.text or "No error details available"
+                
+                logger.error(f"Transcription service error: {error_detail}")
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Transcription service error: {error_detail}"
+                )
+
+            try:
+                result = response.json()
+            except Exception as e:
+                logger.error(f"Failed to parse JSON response: {str(e)}")
+                logger.error(f"Raw response: {response.text}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="Invalid JSON response from transcription service"
+                )
+
+            # Check for different possible response formats
+            transcription = None
+            if isinstance(result, dict):
+                transcription = (
+                    result.get('chunk_transcription') or  # Check for chunk_transcription first
+                    result.get('transcription') or 
+                    result.get('text') or 
+                    result.get('result')
+                )
+            elif isinstance(result, str):
+                transcription = result
+
+            if not transcription:
+                logger.error(f"No transcription found in response: {result}")
+                raise HTTPException(
+                    status_code=500,
+                    detail="No transcription found in service response"
+                )
+
+            logger.info(f"Successfully extracted transcription: {transcription}")
+
+        except requests.RequestException as e:
+            logger.error(f"Error calling transcription service: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to connect to transcription service: {str(e)}"
+            )
+
+        # Create a new text with the transcription
+        try:
+            text = UserText(
+                title=f"Transcription: {filename}",
+                content=transcription,
+                user_id=current_user.id
+            )
+            db.add(text)
+            db.commit()
+            db.refresh(text)
+
+            return {
+                "text_id": text.id,
+                "title": text.title,
+                "content": transcription,
+                "created_at": text.created_at,
+                "updated_at": text.updated_at,
+                "user_id": text.user_id
+            }
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating text record: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to save transcription")
+
+    except Exception as e:
+        logger.error(f"Transcription error: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Transcription failed: {str(e)}"
+        )
+
+    finally:
+        # Clean up the audio file
+        if 'file_path' in locals() and file_path.exists():
+            try:
+                file_path.unlink()
+            except Exception as e:
+                logger.error(f"Error deleting audio file: {str(e)}")
+        
+        file.file.close()
 
 if __name__ == "__main__":
     import uvicorn

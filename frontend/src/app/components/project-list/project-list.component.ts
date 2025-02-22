@@ -10,6 +10,7 @@ import 'quill/dist/quill.core.css';
 import 'quill/dist/quill.snow.css';
 import 'quill/dist/quill.bubble.css';
 import { QUILL_CONFIG_TOKEN } from 'ngx-quill';
+import { HttpClient } from '@angular/common/http';
 
 interface ProjectWithStats extends Project {
   documentCount: number;
@@ -104,7 +105,7 @@ interface SharedUser {
 
         <!-- Action Buttons -->
         <div class="p-4 border-t flex-shrink-0" *ngIf="selectedProject">
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-3 gap-2">
             <button (click)="createText()"
                     class="bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center group relative">
               <i class="pi pi-file-edit text-xl"></i>
@@ -117,6 +118,19 @@ interface SharedUser {
               <i class="pi pi-upload text-xl"></i>
               <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                 Upload File
+              </span>
+            </button>
+            <button (click)="toggleRecording()"
+                    [class.bg-red-500]="isRecording"
+                    [class.hover:bg-red-600]="isRecording"
+                    [class.bg-blue-500]="!isRecording"
+                    [class.hover:bg-blue-600]="!isRecording"
+                    class="text-white p-3 rounded-lg flex items-center justify-center group relative">
+              <i [class.pi-microphone]="!isRecording"
+                 [class.pi-stop-circle]="isRecording"
+                 class="pi text-xl"></i>
+              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                {{isRecording ? 'Stop Recording' : 'Record Audio'}}
               </span>
             </button>
           </div>
@@ -463,10 +477,17 @@ export class ProjectListComponent implements OnInit {
 
   autoSaveTimeout: any;
 
+  isRecording = false;
+  mediaRecorder: MediaRecorder | null = null;
+  audioChunks: Blob[] = [];
+
+  isTranscribing = false;
+
   constructor(
     private projectService: ProjectService,
     private textService: TextService,
-    private router: Router
+    private router: Router,
+    private http: HttpClient
   ) { }
 
   ngOnInit(): void {
@@ -952,5 +973,89 @@ export class ProjectListComponent implements OnInit {
         }
       });
     }
+  }
+
+  async toggleRecording() {
+    if (!this.isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.mediaRecorder = new MediaRecorder(stream);
+        this.audioChunks = [];
+
+        this.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.audioChunks.push(event.data);
+          }
+        };
+
+        this.mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
+          this.transcribeAudio(audioBlob);
+        };
+
+        this.mediaRecorder.start();
+        this.isRecording = true;
+      } catch (err) {
+        console.error('Error accessing microphone:', err);
+        // Show error message to user
+      }
+    } else {
+      if (this.mediaRecorder) {
+        this.mediaRecorder.stop();
+        this.isRecording = false;
+        
+        // Stop all tracks in the stream
+        const stream = this.mediaRecorder.stream;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    }
+  }
+
+  transcribeAudio(audioBlob: Blob) {
+    if (!this.selectedProject?.id) {
+      console.error('No project selected');
+      // TODO: Show error message to user
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'recording.wav');
+
+    // Show loading state
+    this.isTranscribing = true;
+
+    this.http.post<UserText>('http://localhost:8000/transcribe-audio', formData)
+      .subscribe({
+        next: (response) => {
+          // Create a new text with the transcription
+          this.textService.createText(
+            response.title || 'Untitled Transcription',
+            response.content || '',
+            [this.selectedProject!.id]
+          ).subscribe({
+            next: (newText: UserText) => {
+              this.selectedText = newText;
+              this.projectTexts.push(newText);
+              // TODO: Show success message to user
+            },
+            error: (error) => {
+              console.error('Error creating text from transcription:', error);
+              // TODO: Show error message to user
+            },
+            complete: () => {
+              this.isTranscribing = false;
+            }
+          });
+        },
+        error: (error) => {
+          console.error('Error transcribing audio:', error);
+          this.isTranscribing = false;
+          // TODO: Show error message to user
+          if (error.status === 500) {
+            const errorMessage = error.error?.detail || 'Failed to transcribe audio';
+            // TODO: Show error message to user
+          }
+        }
+      });
   }
 } 
