@@ -8,6 +8,7 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains import ConversationalRetrievalChain
 from langchain_huggingface import HuggingFacePipeline
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from langchain_ollama import OllamaLLM
 import torch
 import os
 
@@ -65,7 +66,9 @@ def create_documents(chunks, source="extracted_text.txt"):
 # مرحله 4: ایجاد embedding با استفاده از مدل لوکال
 def create_embeddings(documents):
     try:
-        embedding_model = HuggingFaceEmbeddings(model_name="Alibaba-NLP/gte-Qwen2-1.5B-instruct")
+        embedding_model = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
+        )
         logger.info("Embedding model initialized.")
         return embedding_model
     except Exception as e:
@@ -76,7 +79,9 @@ def create_embeddings(documents):
 def store_embeddings(documents, embedding_model):
     try:
         faiss_db = FAISS.from_documents(documents, embedding_model)
-        logger.info(f"FAISS index has {faiss_db.index.ntotal} vectors.")
+        # Save the FAISS index
+        faiss_db.save_local("faiss_index")
+        logger.info(f"FAISS index has {faiss_db.index.ntotal} vectors and saved to disk.")
         return faiss_db
     except Exception as e:
         logger.error(f"Failed to store embeddings in FAISS: {e}")
@@ -85,10 +90,8 @@ def store_embeddings(documents, embedding_model):
 # مرحله 6: استفاده از مدل زبانی لوکال برای پاسخ‌دهی
 def load_local_llm():
     try:
-        from langchain_community.llms import Ollama
-        
         # Initialize Ollama with the desired model
-        llm = Ollama(
+        llm = OllamaLLM(
             model="llama3.2:3b",  # یا هر مدل دیگری که در Ollama نصب دارید
             base_url="http://localhost:11434",
             temperature=0.7,
@@ -100,7 +103,7 @@ def load_local_llm():
         logger.info("Ollama LLM initialized successfully.")
         return llm
     except Exception as e:
-        logger.error(f"Failed to load Ollama LLM: {e}")
+        logger.error(f"Failed to initialize Ollama LLM: {e}")
         return None
 
 # مرحله 7: تعریف زنجیره ConversationalRetrievalChain
