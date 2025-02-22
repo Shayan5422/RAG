@@ -486,6 +486,52 @@ async def get_project_documents(
     documents = db.query(Document).filter(Document.project_id == project_id).all()
     return documents
 
+@app.delete("/projects/{project_id}/documents/{document_id}")
+async def delete_project_document(
+    project_id: int,
+    document_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if user owns or has shared access to the project
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    # Get the document
+    document = db.query(Document).filter(
+        Document.id == document_id,
+        Document.project_id == project_id
+    ).first()
+    
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        # Delete the actual file
+        file_path = Path(document.file_path.lstrip('/'))
+        if file_path.exists():
+            file_path.unlink()
+
+        # Delete from database
+        db.delete(document)
+        db.commit()
+        
+        return {"message": "Document deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Update the ask endpoint to support project context
 @app.post("/projects/{project_id}/ask")
 async def ask_project_question(

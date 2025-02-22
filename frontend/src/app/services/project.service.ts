@@ -90,4 +90,8 @@ export class ProjectService {
   getProjectSharedUsers(projectId: number): Observable<SharedUser[]> {
     return this.http.get<SharedUser[]>(`${this.apiUrl}/projects/${projectId}/shared-users`);
   }
+
+  deleteDocument(projectId: number, documentId: number): Observable<any> {
+    return this.http.delete(`${this.apiUrl}/projects/${projectId}/documents/${documentId}`);
+  }
 } 

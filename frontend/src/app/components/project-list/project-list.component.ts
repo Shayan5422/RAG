@@ -155,6 +155,11 @@ interface SharedUser {
                   <i class="pi pi-external-link mr-1"></i>
                   Open in New Tab
                 </a>
+                <button (click)="deleteDocument(selectedDocument.id)"
+                        class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
+                  <i class="pi pi-trash mr-1"></i>
+                  Delete
+                </button>
               </div>
             </div>
             <div class="flex-1 bg-gray-100">
@@ -931,5 +936,21 @@ export class ProjectListComponent implements OnInit {
           console.error('Error loading shared users:', error);
         }
       });
+  }
+
+  deleteDocument(id: number): void {
+    if (!this.selectedProject) return;
+    
+    if (confirm('Are you sure you want to delete this document?')) {
+      this.projectService.deleteDocument(this.selectedProject.id, id).subscribe({
+        next: () => {
+          this.projectDocuments = this.projectDocuments.filter(d => d.id !== id);
+          this.selectedDocument = null;
+        },
+        error: (error) => {
+          console.error('Error deleting document:', error);
+        }
+      });
+    }
   }
 } 
