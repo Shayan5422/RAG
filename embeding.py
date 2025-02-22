@@ -54,9 +54,17 @@ def split_text(text, chunk_size=1000, chunk_overlap=200):
 # مرحله 3: ایجاد اشیاء Document از بخش‌های متن
 def create_documents(chunks, source="extracted_text.txt"):
     try:
-        # Define a minimum length for meaningful content
-        MIN_LENGTH = 50
-        documents = [Document(page_content=chunk, metadata={"source": source}) for chunk in chunks if len(chunk.strip()) >= MIN_LENGTH]
+        # Define a minimum length for meaningful content - reduced from 50 to 10
+        MIN_LENGTH = 10
+        
+        # Filter out empty or whitespace-only chunks
+        valid_chunks = [chunk for chunk in chunks if chunk and len(chunk.strip()) >= MIN_LENGTH]
+        
+        if not valid_chunks:
+            logger.warning("No valid chunks found after filtering.")
+            return []
+            
+        documents = [Document(page_content=chunk, metadata={"source": source}) for chunk in valid_chunks]
         logger.info(f"Created {len(documents)} Document objects after filtering.")
         return documents
     except Exception as e:

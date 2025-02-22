@@ -1,13 +1,13 @@
 import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterModule } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterModule],
   template: `
     <div class="min-h-screen bg-gray-50 flex items-center justify-center">
       <div class="max-w-md w-full bg-white rounded-lg shadow-md p-8">
@@ -75,10 +75,11 @@ export class LoginComponent {
         next: (response) => {
           localStorage.setItem('token', response.access_token);
           this.router.navigate(['/projects']);
+          this.error = '';
         },
         error: (error) => {
           console.error('Login error:', error);
-          this.error = 'Invalid username or password';
+          this.error = error.error?.detail || 'Invalid username or password';
         }
       });
   }

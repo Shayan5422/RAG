@@ -15,6 +15,7 @@ class User(Base):
     chats = relationship("Chat", back_populates="user")
     projects = relationship("Project", back_populates="user")
     created_at = Column(DateTime, default=datetime.utcnow)
+    texts = relationship("UserText", back_populates="user")
 
 class Project(Base):
     __tablename__ = "projects"
@@ -56,6 +57,26 @@ class Chat(Base):
     
     user = relationship("User", back_populates="chats")
     project = relationship("Project", back_populates="chats")
+
+class UserText(Base):
+    __tablename__ = "user_texts"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, index=True)
+    content = Column(Text)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("User", back_populates="texts")
+    projects = relationship("Project", secondary="text_project_association")
+
+class TextProjectAssociation(Base):
+    __tablename__ = "text_project_association"
+    
+    text_id = Column(Integer, ForeignKey("user_texts.id"), primary_key=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create database engine
 SQLALCHEMY_DATABASE_URL = "sqlite:///./app.db"

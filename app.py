@@ -25,7 +25,7 @@ from embeding import (
 from langchain.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 import logging
-from models import User, Chat, Project, Document
+from models import User, Chat, Project, Document, UserText, TextProjectAssociation
 from auth import (
     get_db,
     get_current_user,
@@ -66,6 +66,34 @@ templates = Jinja2Templates(directory="templates")
 # Create uploads directory if it doesn't exist
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Custom StaticFiles class to add CORS headers
+class CustomStaticFiles(StaticFiles):
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            response_started = False
+
+            async def wrapped_send(message):
+                nonlocal response_started
+                if message["type"] == "http.response.start":
+                    response_started = True
+                    headers = list(message.get("headers", []))
+                    headers.extend([
+                        (b"Access-Control-Allow-Origin", b"*"),
+                        (b"Access-Control-Allow-Methods", b"GET, OPTIONS"),
+                        (b"Access-Control-Allow-Headers", b"*"),
+                        (b"Content-Type", b"application/pdf"),
+                        (b"Content-Disposition", b"inline"),
+                    ])
+                    message["headers"] = headers
+                await send(message)
+
+            await super().__call__(scope, receive, wrapped_send)
+        else:
+            await super().__call__(scope, receive, send)
+
+# Mount the uploads directory with custom static files handler
+app.mount("/uploads", CustomStaticFiles(directory="uploads"), name="uploads")
 
 # Authentication endpoints
 @app.post("/register")
@@ -385,16 +413,19 @@ async def upload_project_document(
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
+        # Create relative path for database storage
+        relative_path = f"/uploads/{project_id}/{file.filename}"
+
         # Extract text from the uploaded file
         text = extract_text_from_pdf(str(file_path))
         if not text:
             raise HTTPException(status_code=500, detail="Failed to extract text from the file")
 
-        # Create document record
+        # Create document record with relative path
         document = Document(
             name=file.filename,
             content=text,
-            file_path=str(file_path),
+            file_path=relative_path,  # Store relative path
             project_id=project_id
         )
         db.add(document)
@@ -409,7 +440,8 @@ async def upload_project_document(
 
         return {
             "message": "Document uploaded successfully",
-            "document_id": document.id
+            "document_id": document.id,
+            "file_path": relative_path  # Return relative path
         }
     except Exception as e:
         logger.error(f"Error uploading document: {str(e)}")
@@ -452,36 +484,69 @@ async def ask_project_question(
         # Get request body
         body = await request.json()
         question = body.get('question')
-        document_ids = body.get('document_ids', [])
+        selected_ids = body.get('document_ids', [])
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
-        if not document_ids:
-            raise HTTPException(status_code=400, detail="At least one document must be selected")
+        if not selected_ids:
+            raise HTTPException(status_code=400, detail="At least one document or text must be selected")
 
         # Get selected documents
         documents = db.query(Document).filter(
-            Document.id.in_(document_ids),
+            Document.id.in_(selected_ids),
             Document.project_id == project_id
         ).all()
-        
-        if not documents:
-            raise HTTPException(status_code=404, detail="No documents found")
 
-        # Combine texts from selected documents
+        # Get selected texts
+        texts = db.query(UserText).join(TextProjectAssociation).filter(
+            UserText.id.in_(selected_ids),
+            TextProjectAssociation.project_id == project_id
+        ).all()
+
+        if not documents and not texts:
+            raise HTTPException(status_code=404, detail="No documents or texts found")
+
+        # Combine texts from selected documents and texts
         all_texts = []
+        
+        # Add document contents
         for doc in documents:
-            chunks = split_text(doc.content)
-            all_texts.extend(chunks)
+            if doc.content and len(doc.content.strip()) > 0:
+                chunks = split_text(doc.content)
+                if chunks:
+                    all_texts.extend(chunks)
+
+        # Add text contents
+        for text in texts:
+            if text.content and len(text.content.strip()) > 0:
+                chunks = split_text(text.content)
+                if chunks:
+                    all_texts.extend(chunks)
+
+        if not all_texts:
+            raise HTTPException(status_code=400, detail="No valid content found in selected items")
 
         # Create documents for embedding
         doc_objects = create_documents(all_texts)
+        if not doc_objects:
+            raise HTTPException(status_code=400, detail="Failed to create document objects from content")
+
         embedding_model = create_embeddings(doc_objects)
+        if not embedding_model:
+            raise HTTPException(status_code=500, detail="Failed to initialize embedding model")
+
         vectorstore = store_embeddings(doc_objects, embedding_model)
+        if not vectorstore:
+            raise HTTPException(status_code=500, detail="Failed to create vector store")
         
         # Load LLM and create QA chain
         llm = load_local_llm()
+        if not llm:
+            raise HTTPException(status_code=500, detail="Failed to initialize language model")
+
         qa_chain = create_qa_chain(llm, vectorstore)
+        if not qa_chain:
+            raise HTTPException(status_code=500, detail="Failed to create QA chain")
         
         # Get answer
         chat_history = []
@@ -489,12 +554,18 @@ async def ask_project_question(
         answer = response.get("answer", "Sorry, I couldn't find an answer to your question.")
 
         # Save chat history
+        source_names = []
+        if documents:
+            source_names.extend(doc.name for doc in documents)
+        if texts:
+            source_names.extend(text.title for text in texts)
+
         chat = Chat(
             user_id=current_user.id,
             project_id=project_id,
             question=question,
             answer=answer,
-            document_name=", ".join(doc.name for doc in documents)
+            document_name=", ".join(source_names)
         )
         db.add(chat)
         db.commit()
@@ -504,6 +575,137 @@ async def ask_project_question(
     except Exception as e:
         logger.error(f"Error in project question endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# User Text Management Routes
+@app.post("/texts")
+async def create_text(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    body = await request.json()
+    title = body.get('title')
+    content = body.get('content')
+    project_ids = body.get('project_ids', [])
+
+    if not title or not content:
+        raise HTTPException(status_code=400, detail="Title and content are required")
+
+    text = UserText(
+        title=title,
+        content=content,
+        user_id=current_user.id
+    )
+    db.add(text)
+    db.commit()
+    db.refresh(text)
+
+    # Associate with projects if specified
+    if project_ids:
+        for project_id in project_ids:
+            association = TextProjectAssociation(
+                text_id=text.id,
+                project_id=project_id
+            )
+            db.add(association)
+        db.commit()
+
+    return text
+
+@app.get("/texts")
+async def get_texts(
+    project_id: int = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    query = db.query(UserText).filter(UserText.user_id == current_user.id)
+    
+    if project_id:
+        query = query.join(TextProjectAssociation).filter(
+            TextProjectAssociation.project_id == project_id
+        )
+    
+    texts = query.all()
+    return texts
+
+@app.get("/texts/{text_id}")
+async def get_text(
+    text_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    text = db.query(UserText).filter(
+        UserText.id == text_id,
+        UserText.user_id == current_user.id
+    ).first()
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found")
+    return text
+
+@app.put("/texts/{text_id}")
+async def update_text(
+    text_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    text = db.query(UserText).filter(
+        UserText.id == text_id,
+        UserText.user_id == current_user.id
+    ).first()
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found")
+
+    body = await request.json()
+    title = body.get('title')
+    content = body.get('content')
+    project_ids = body.get('project_ids')
+
+    if title:
+        text.title = title
+    if content:
+        text.content = content
+    
+    # Update project associations if specified
+    if project_ids is not None:
+        # Remove existing associations
+        db.query(TextProjectAssociation).filter(
+            TextProjectAssociation.text_id == text_id
+        ).delete()
+        
+        # Add new associations
+        for project_id in project_ids:
+            association = TextProjectAssociation(
+                text_id=text_id,
+                project_id=project_id
+            )
+            db.add(association)
+
+    db.commit()
+    db.refresh(text)
+    return text
+
+@app.delete("/texts/{text_id}")
+async def delete_text(
+    text_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    text = db.query(UserText).filter(
+        UserText.id == text_id,
+        UserText.user_id == current_user.id
+    ).first()
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found")
+
+    # Remove project associations
+    db.query(TextProjectAssociation).filter(
+        TextProjectAssociation.text_id == text_id
+    ).delete()
+
+    db.delete(text)
+    db.commit()
+    return {"message": "Text deleted successfully"}
 
 if __name__ == "__main__":
     import uvicorn
