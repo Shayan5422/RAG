@@ -22,10 +22,11 @@ from embeding import (
     load_local_llm,
     create_qa_chain
 )
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 import logging
-from models import User, Chat, Project, Document, UserText, TextProjectAssociation
+from models import User, Chat, Project, Document, UserText, TextProjectAssociation, ProjectShare, TextShare
+from schemas import ShareRequest, UserResponse, ProjectResponse, TextResponse
 from auth import (
     get_db,
     get_current_user,
@@ -371,8 +372,15 @@ async def get_projects(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    projects = db.query(Project).filter(Project.user_id == current_user.id).all()
-    return projects
+    # Get owned projects
+    owned_projects = db.query(Project).filter(Project.user_id == current_user.id).all()
+    
+    # Get shared projects
+    shared_projects = db.query(Project).join(ProjectShare).filter(
+        ProjectShare.user_id == current_user.id
+    ).all()
+    
+    return owned_projects + shared_projects
 
 @app.get("/projects/{project_id}")
 async def get_project(
@@ -395,13 +403,20 @@ async def upload_project_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Verify project exists and belongs to user
+    # Check if user owns or has shared access to the project
     project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.user_id == current_user.id
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
     ).first()
+    
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
 
     try:
         # Create project directory if it doesn't exist
@@ -453,13 +468,20 @@ async def get_project_documents(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Verify project exists and belongs to user
+    # Check if user owns or has shared access to the project
     project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.user_id == current_user.id
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
     ).first()
+    
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
 
     documents = db.query(Document).filter(Document.project_id == project_id).all()
     return documents
@@ -472,13 +494,20 @@ async def ask_project_question(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Verify project exists and belongs to user
+    # Check if user owns or has shared access to the project
     project = db.query(Project).filter(
-        Project.id == project_id,
-        Project.user_id == current_user.id
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
     ).first()
+    
     if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
 
     try:
         # Get request body
@@ -618,15 +647,45 @@ async def get_texts(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    query = db.query(UserText).filter(UserText.user_id == current_user.id)
-    
     if project_id:
-        query = query.join(TextProjectAssociation).filter(
+        # Check if user has access to the project
+        project_access = db.query(Project).filter(
+            (Project.id == project_id) &
+            (
+                (Project.user_id == current_user.id) |  # User is owner
+                Project.id.in_(  # User has shared access
+                    db.query(ProjectShare.project_id)
+                    .filter(ProjectShare.user_id == current_user.id)
+                )
+            )
+        ).first()
+        
+        if not project_access:
+            raise HTTPException(status_code=404, detail="Project not found or access denied")
+            
+        # Get texts associated with the project
+        texts = db.query(UserText).join(TextProjectAssociation).filter(
             TextProjectAssociation.project_id == project_id
-        )
-    
-    texts = query.all()
-    return texts
+        ).all()
+        
+        return texts
+    else:
+        # Get all texts user has access to
+        return db.query(UserText).filter(
+            (
+                (UserText.user_id == current_user.id) |  # Owned texts
+                UserText.id.in_(  # Directly shared texts
+                    db.query(TextShare.text_id)
+                    .filter(TextShare.user_id == current_user.id)
+                ) |
+                UserText.id.in_(  # Texts from shared projects
+                    db.query(TextProjectAssociation.text_id)
+                    .join(Project, TextProjectAssociation.project_id == Project.id)
+                    .join(ProjectShare, ProjectShare.project_id == Project.id)
+                    .filter(ProjectShare.user_id == current_user.id)
+                )
+            )
+        ).all()
 
 @app.get("/texts/{text_id}")
 async def get_text(
@@ -634,12 +693,25 @@ async def get_text(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Check if user owns the text or has shared access
     text = db.query(UserText).filter(
-        UserText.id == text_id,
-        UserText.user_id == current_user.id
+        (UserText.id == text_id) &
+        (
+            (UserText.user_id == current_user.id) |  # User is owner
+            UserText.id.in_(  # User has direct shared access
+                db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+            ) |
+            UserText.id.in_(  # Text is in a shared project
+                db.query(TextProjectAssociation.text_id)
+                .join(Project, TextProjectAssociation.project_id == Project.id)
+                .join(ProjectShare, ProjectShare.project_id == Project.id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
     ).first()
+    
     if not text:
-        raise HTTPException(status_code=404, detail="Text not found")
+        raise HTTPException(status_code=404, detail="Text not found or access denied")
     return text
 
 @app.put("/texts/{text_id}")
@@ -649,12 +721,25 @@ async def update_text(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Check if user owns the text or has shared access
     text = db.query(UserText).filter(
-        UserText.id == text_id,
-        UserText.user_id == current_user.id
+        (UserText.id == text_id) &
+        (
+            (UserText.user_id == current_user.id) |  # User is owner
+            UserText.id.in_(  # User has direct shared access
+                db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+            ) |
+            UserText.id.in_(  # Text is in a shared project
+                db.query(TextProjectAssociation.text_id)
+                .join(Project, TextProjectAssociation.project_id == Project.id)
+                .join(ProjectShare, ProjectShare.project_id == Project.id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
     ).first()
+    
     if not text:
-        raise HTTPException(status_code=404, detail="Text not found")
+        raise HTTPException(status_code=404, detail="Text not found or access denied")
 
     body = await request.json()
     title = body.get('title')
@@ -668,6 +753,21 @@ async def update_text(
     
     # Update project associations if specified
     if project_ids is not None:
+        # Verify user has access to all specified projects
+        for project_id in project_ids:
+            project_access = db.query(Project).filter(
+                (Project.id == project_id) &
+                (
+                    (Project.user_id == current_user.id) |  # User is owner
+                    Project.id.in_(  # User has shared access
+                        db.query(ProjectShare.project_id)
+                        .filter(ProjectShare.user_id == current_user.id)
+                    )
+                )
+            ).first()
+            if not project_access:
+                raise HTTPException(status_code=404, detail=f"Project {project_id} not found or access denied")
+        
         # Remove existing associations
         db.query(TextProjectAssociation).filter(
             TextProjectAssociation.text_id == text_id
@@ -691,21 +791,273 @@ async def delete_text(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Only owner can delete the text
     text = db.query(UserText).filter(
         UserText.id == text_id,
-        UserText.user_id == current_user.id
+        UserText.user_id == current_user.id  # Must be owner to delete
     ).first()
     if not text:
-        raise HTTPException(status_code=404, detail="Text not found")
+        raise HTTPException(status_code=404, detail="Text not found or you don't have permission to delete")
 
     # Remove project associations
     db.query(TextProjectAssociation).filter(
         TextProjectAssociation.text_id == text_id
     ).delete()
 
+    # Remove shares
+    db.query(TextShare).filter(
+        TextShare.text_id == text_id
+    ).delete()
+
     db.delete(text)
     db.commit()
     return {"message": "Text deleted successfully"}
+
+# Project Sharing Endpoints
+@app.post("/projects/{project_id}/share")
+async def share_project(
+    project_id: int,
+    share_request: ShareRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Verify project exists and belongs to user
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Find user to share with
+    share_with_user = db.query(User).filter(User.email == share_request.email).first()
+    if not share_with_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already shared
+    existing_share = db.query(ProjectShare).filter(
+        ProjectShare.project_id == project_id,
+        ProjectShare.user_id == share_with_user.id
+    ).first()
+    if existing_share:
+        raise HTTPException(status_code=400, detail="Project already shared with this user")
+    
+    # Create share
+    share = ProjectShare(project_id=project_id, user_id=share_with_user.id)
+    db.add(share)
+    db.commit()
+    
+    return {"message": "Project shared successfully"}
+
+@app.delete("/projects/{project_id}/share/{user_id}")
+async def remove_project_access(
+    project_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Verify project exists and belongs to user
+    project = db.query(Project).filter(
+        Project.id == project_id,
+        Project.user_id == current_user.id
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Remove share
+    share = db.query(ProjectShare).filter(
+        ProjectShare.project_id == project_id,
+        ProjectShare.user_id == user_id
+    ).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    
+    db.delete(share)
+    db.commit()
+    
+    return {"message": "Access removed successfully"}
+
+@app.get("/projects/{project_id}/shared-users", response_model=List[UserResponse])
+async def get_project_shared_users(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if user owns or has shared access to the project
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+    
+    # Get shared users
+    shared_users = db.query(User).join(ProjectShare).filter(
+        ProjectShare.project_id == project_id
+    ).all()
+    
+    return shared_users
+
+# Text Sharing Endpoints
+@app.post("/texts/{text_id}/share")
+async def share_text(
+    text_id: int,
+    share_request: ShareRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if user owns the text or has shared access
+    text = db.query(UserText).filter(
+        (UserText.id == text_id) &
+        (
+            (UserText.user_id == current_user.id) |  # User is owner
+            UserText.id.in_(  # User has direct shared access
+                db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+            ) |
+            UserText.id.in_(  # Text is in a shared project
+                db.query(TextProjectAssociation.text_id)
+                .join(Project, TextProjectAssociation.project_id == Project.id)
+                .join(ProjectShare, ProjectShare.project_id == Project.id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found or access denied")
+    
+    # Find user to share with
+    share_with_user = db.query(User).filter(User.email == share_request.email).first()
+    if not share_with_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if already shared
+    existing_share = db.query(TextShare).filter(
+        TextShare.text_id == text_id,
+        TextShare.user_id == share_with_user.id
+    ).first()
+    if existing_share:
+        raise HTTPException(status_code=400, detail="Text already shared with this user")
+    
+    # Check if text is associated with any projects
+    text_projects = db.query(TextProjectAssociation).filter(
+        TextProjectAssociation.text_id == text_id
+    ).all()
+    
+    if not text_projects:
+        # Create a temporary project for standalone text
+        temp_project = Project(
+            name=f"Shared: {text.title}",
+            description="Temporary project for shared text",
+            user_id=current_user.id
+        )
+        db.add(temp_project)
+        db.commit()
+        db.refresh(temp_project)
+        
+        # Associate text with temporary project
+        text_project = TextProjectAssociation(
+            text_id=text_id,
+            project_id=temp_project.id
+        )
+        db.add(text_project)
+        
+        # Share the temporary project with the user
+        project_share = ProjectShare(
+            project_id=temp_project.id,
+            user_id=share_with_user.id
+        )
+        db.add(project_share)
+        db.commit()
+    else:
+        # Share existing projects with the user
+        for text_project in text_projects:
+            existing_project_share = db.query(ProjectShare).filter(
+                ProjectShare.project_id == text_project.project_id,
+                ProjectShare.user_id == share_with_user.id
+            ).first()
+            
+            if not existing_project_share:
+                project_share = ProjectShare(
+                    project_id=text_project.project_id,
+                    user_id=share_with_user.id
+                )
+                db.add(project_share)
+    
+    # Create text share
+    share = TextShare(text_id=text_id, user_id=share_with_user.id)
+    db.add(share)
+    db.commit()
+    
+    return {"message": "Text shared successfully"}
+
+@app.delete("/texts/{text_id}/share/{user_id}")
+async def remove_text_access(
+    text_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Verify text exists and belongs to user
+    text = db.query(UserText).filter(
+        UserText.id == text_id,
+        UserText.user_id == current_user.id
+    ).first()
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found")
+    
+    # Remove share
+    share = db.query(TextShare).filter(
+        TextShare.text_id == text_id,
+        TextShare.user_id == user_id
+    ).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Share not found")
+    
+    db.delete(share)
+    db.commit()
+    
+    return {"message": "Access removed successfully"}
+
+@app.get("/texts/{text_id}/shared-users", response_model=List[UserResponse])
+async def get_text_shared_users(
+    text_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if user owns the text or has shared access
+    text = db.query(UserText).filter(
+        (UserText.id == text_id) &
+        (
+            (UserText.user_id == current_user.id) |  # User is owner
+            UserText.id.in_(  # User has direct shared access
+                db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+            ) |
+            UserText.id.in_(  # Text is in a shared project
+                db.query(TextProjectAssociation.text_id)
+                .join(Project, TextProjectAssociation.project_id == Project.id)
+                .join(ProjectShare, ProjectShare.project_id == Project.id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not text:
+        raise HTTPException(status_code=404, detail="Text not found or access denied")
+    
+    # Get shared users
+    shared_users = db.query(User).join(TextShare).filter(
+        TextShare.text_id == text_id
+    ).all()
+    
+    return shared_users
 
 if __name__ == "__main__":
     import uvicorn

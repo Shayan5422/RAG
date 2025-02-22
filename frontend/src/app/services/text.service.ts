@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { SharedUser } from './project.service';
 
 export interface UserText {
   id: number;
@@ -8,6 +9,8 @@ export interface UserText {
   content: string;
   created_at: string;
   updated_at: string;
+  owner_id: number;
+  shared_users?: SharedUser[];
 }
 
 @Injectable({
@@ -47,5 +50,17 @@ export class TextService {
 
   deleteText(id: number): Observable<any> {
     return this.http.delete(`${this.apiUrl}/texts/${id}`);
+  }
+
+  shareText(textId: number, email: string): Observable<any> {
+    return this.http.post(`${this.apiUrl}/texts/${textId}/share`, { email });
+  }
+
+  removeTextAccess(textId: number, userId: number): Observable<any> {
+    return this.http.delete(`${this.apiUrl}/texts/${textId}/share/${userId}`);
+  }
+
+  getTextSharedUsers(textId: number): Observable<SharedUser[]> {
+    return this.http.get<SharedUser[]>(`${this.apiUrl}/texts/${textId}/shared-users`);
   }
 } 

@@ -9,6 +9,8 @@ export interface Project {
   created_at: string;
   updated_at: string;
   user_id?: number;
+  owner_id: number;
+  shared_users?: SharedUser[];
 }
 
 export interface Document {
@@ -19,6 +21,12 @@ export interface Document {
   project_id: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface SharedUser {
+  id: number;
+  email: string;
+  shared_at: string;
 }
 
 @Injectable({
@@ -69,5 +77,17 @@ export class ProjectService {
         }
       }
     );
+  }
+
+  shareProject(projectId: number, email: string): Observable<any> {
+    return this.http.post(`${this.apiUrl}/projects/${projectId}/share`, { email });
+  }
+
+  removeProjectAccess(projectId: number, userId: number): Observable<any> {
+    return this.http.delete(`${this.apiUrl}/projects/${projectId}/share/${userId}`);
+  }
+
+  getProjectSharedUsers(projectId: number): Observable<SharedUser[]> {
+    return this.http.get<SharedUser[]>(`${this.apiUrl}/projects/${projectId}/shared-users`);
   }
 } 

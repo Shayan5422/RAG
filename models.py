@@ -14,6 +14,8 @@ class User(Base):
     hashed_password = Column(String)
     chats = relationship("Chat", back_populates="user")
     projects = relationship("Project", back_populates="user")
+    shared_projects = relationship("Project", secondary="project_shares", back_populates="shared_users")
+    shared_texts = relationship("UserText", secondary="text_shares", back_populates="shared_users")
     created_at = Column(DateTime, default=datetime.utcnow)
     texts = relationship("UserText", back_populates="user")
 
@@ -30,6 +32,14 @@ class Project(Base):
     user = relationship("User", back_populates="projects")
     documents = relationship("Document", back_populates="project")
     chats = relationship("Chat", back_populates="project")
+    shared_users = relationship("User", secondary="project_shares", back_populates="shared_projects")
+
+class ProjectShare(Base):
+    __tablename__ = "project_shares"
+    
+    project_id = Column(Integer, ForeignKey("projects.id"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    shared_at = Column(DateTime, default=datetime.utcnow)
 
 class Document(Base):
     __tablename__ = "documents"
@@ -70,6 +80,14 @@ class UserText(Base):
     
     user = relationship("User", back_populates="texts")
     projects = relationship("Project", secondary="text_project_association")
+    shared_users = relationship("User", secondary="text_shares", back_populates="shared_texts")
+
+class TextShare(Base):
+    __tablename__ = "text_shares"
+    
+    text_id = Column(Integer, ForeignKey("user_texts.id"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    shared_at = Column(DateTime, default=datetime.utcnow)
 
 class TextProjectAssociation(Base):
     __tablename__ = "text_project_association"

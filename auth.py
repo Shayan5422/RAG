@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 # JWT Configuration
 SECRET_KEY = "your-secret-key-keep-it-secret"  # In production, use a secure secret key
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 300
 
 # Password hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")

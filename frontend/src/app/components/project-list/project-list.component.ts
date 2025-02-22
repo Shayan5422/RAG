@@ -15,6 +15,11 @@ interface ProjectWithStats extends Project {
   documentCount: number;
 }
 
+interface SharedUser {
+  id: number;
+  email: string;
+}
+
 @Component({
   selector: 'app-project-list',
   standalone: true,
@@ -122,8 +127,19 @@ interface ProjectWithStats extends Project {
       <div class="flex-1 p-6 overflow-y-auto">
         <!-- Project Header -->
         <div *ngIf="selectedProject" class="mb-6">
-          <h2 class="text-2xl font-bold">{{selectedProject.name}}</h2>
-          <p class="text-gray-600">{{selectedProject.description}}</p>
+          <div class="flex justify-between items-start">
+            <div>
+              <h2 class="text-2xl font-bold">{{selectedProject.name}}</h2>
+              <p class="text-gray-600">{{selectedProject.description}}</p>
+            </div>
+            <button (click)="showShareProject = true"
+                    class="bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 flex items-center justify-center group relative">
+              <i class="pi pi-share-alt text-xl"></i>
+              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                Share Project
+              </span>
+            </button>
+          </div>
         </div>
 
         <!-- Content Area -->
@@ -156,6 +172,11 @@ interface ProjectWithStats extends Project {
                      class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
                      [class.border-gray-300]="selectedText.title === ''">
               <div class="space-x-2 flex-shrink-0">
+                <button (click)="showShareText = true"
+                        class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
+                  <i class="pi pi-share-alt mr-1"></i>
+                  Share
+                </button>
                 <button (click)="deleteText(selectedText.id)"
                         class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
                   <i class="pi pi-trash mr-1"></i>
@@ -297,6 +318,80 @@ interface ProjectWithStats extends Project {
         </div>
       </div>
     </div>
+
+    <!-- Share Project Modal -->
+    <div *ngIf="showShareProject" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-6 w-[500px]">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-bold">Share Project</h2>
+          <button (click)="showShareProject = false" class="text-gray-500 hover:text-gray-700">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+        
+        <div class="mb-6">
+          <div class="flex gap-2 mb-4">
+            <input type="email" [(ngModel)]="shareEmail" 
+                   placeholder="Enter email address"
+                   class="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500">
+            <button (click)="shareProjectWithUser()"
+                    [disabled]="!shareEmail"
+                    class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400">
+              Share
+            </button>
+          </div>
+          
+          <div class="space-y-2" *ngIf="projectSharedUsers.length > 0">
+            <h3 class="font-semibold text-gray-700">Shared with:</h3>
+            <div *ngFor="let user of projectSharedUsers" 
+                 class="flex justify-between items-center p-2 bg-gray-50 rounded">
+              <span>{{user.email}}</span>
+              <button (click)="removeProjectAccess(user.id)"
+                      class="text-red-500 hover:text-red-700">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Share Text Modal -->
+    <div *ngIf="showShareText" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-6 w-[500px]">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-bold">Share Text</h2>
+          <button (click)="showShareText = false" class="text-gray-500 hover:text-gray-700">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+        
+        <div class="mb-6">
+          <div class="flex gap-2 mb-4">
+            <input type="email" [(ngModel)]="shareEmail" 
+                   placeholder="Enter email address"
+                   class="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:border-blue-500">
+            <button (click)="shareTextWithUser()"
+                    [disabled]="!shareEmail"
+                    class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400">
+              Share
+            </button>
+          </div>
+          
+          <div class="space-y-2" *ngIf="textSharedUsers.length > 0">
+            <h3 class="font-semibold text-gray-700">Shared with:</h3>
+            <div *ngFor="let user of textSharedUsers" 
+                 class="flex justify-between items-center p-2 bg-gray-50 rounded">
+              <span>{{user.email}}</span>
+              <button (click)="removeTextAccess(user.id)"
+                      class="text-red-500 hover:text-red-700">
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   `,
   styles: [`
     :host ::ng-deep .editor-container {
@@ -382,6 +477,12 @@ export class ProjectListComponent implements OnInit {
   selectedDocument: Document | null = null;
   selectedText: UserText | null = null;
 
+  showShareProject = false;
+  showShareText = false;
+  shareEmail = '';
+  projectSharedUsers: SharedUser[] = [];
+  textSharedUsers: SharedUser[] = [];
+
   constructor(
     private projectService: ProjectService,
     private textService: TextService,
@@ -437,6 +538,7 @@ export class ProjectListComponent implements OnInit {
     this.question = '';
     this.answer = '';
     this.loadProjectContent();
+    this.loadProjectSharedUsers();
   }
 
   loadProjectContent(): void {
@@ -620,9 +722,11 @@ export class ProjectListComponent implements OnInit {
   toggleText(text: UserText): void {
     if (this.selectedText?.id === text.id) {
       this.selectedText = null;
+      this.textSharedUsers = [];
     } else {
       this.selectedText = text;
       this.selectedDocument = null;
+      this.loadTextSharedUsers();
     }
   }
 
@@ -717,5 +821,91 @@ export class ProjectListComponent implements OnInit {
     const baseUrl = 'http://localhost:8000';
     const filePath = doc.file_path.startsWith('/') ? doc.file_path : `/${doc.file_path}`;
     return `${baseUrl}${filePath}`;
+  }
+
+  shareProjectWithUser(): void {
+    if (!this.selectedProject || !this.shareEmail) return;
+
+    this.projectService.shareProject(this.selectedProject.id, this.shareEmail)
+      .subscribe({
+        next: () => {
+          this.loadProjectSharedUsers();
+          this.shareEmail = '';
+        },
+        error: (error) => {
+          console.error('Error sharing project:', error);
+        }
+      });
+  }
+
+  shareTextWithUser(): void {
+    if (!this.selectedText || !this.shareEmail) return;
+
+    this.textService.shareText(this.selectedText.id, this.shareEmail)
+      .subscribe({
+        next: () => {
+          this.loadTextSharedUsers();
+          this.shareEmail = '';
+        },
+        error: (error) => {
+          console.error('Error sharing text:', error);
+        }
+      });
+  }
+
+  removeProjectAccess(userId: number): void {
+    if (!this.selectedProject) return;
+
+    this.projectService.removeProjectAccess(this.selectedProject.id, userId)
+      .subscribe({
+        next: () => {
+          this.loadProjectSharedUsers();
+        },
+        error: (error) => {
+          console.error('Error removing project access:', error);
+        }
+      });
+  }
+
+  removeTextAccess(userId: number): void {
+    if (!this.selectedText) return;
+
+    this.textService.removeTextAccess(this.selectedText.id, userId)
+      .subscribe({
+        next: () => {
+          this.loadTextSharedUsers();
+        },
+        error: (error) => {
+          console.error('Error removing text access:', error);
+        }
+      });
+  }
+
+  loadProjectSharedUsers(): void {
+    if (!this.selectedProject) return;
+
+    this.projectService.getProjectSharedUsers(this.selectedProject.id)
+      .subscribe({
+        next: (users) => {
+          this.projectSharedUsers = users;
+        },
+        error: (error) => {
+          console.error('Error loading shared users:', error);
+        }
+      });
+  }
+
+  loadTextSharedUsers(): void {
+    if (!this.selectedText) return;
+
+    this.textService.getTextSharedUsers(this.selectedText.id)
+      .subscribe({
+        next: (users) => {
+          this.textSharedUsers = users;
+        },
+        error: (error) => {
+          console.error('Error loading shared users:', error);
+        }
+      });
   }
 } 
