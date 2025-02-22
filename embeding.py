@@ -65,7 +65,7 @@ def create_documents(chunks, source="extracted_text.txt"):
 # مرحله 4: ایجاد embedding با استفاده از مدل لوکال
 def create_embeddings(documents):
     try:
-        embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        embedding_model = HuggingFaceEmbeddings(model_name="Alibaba-NLP/gte-Qwen2-1.5B-instruct")
         logger.info("Embedding model initialized.")
         return embedding_model
     except Exception as e:
@@ -85,43 +85,22 @@ def store_embeddings(documents, embedding_model):
 # مرحله 6: استفاده از مدل زبانی لوکال برای پاسخ‌دهی
 def load_local_llm():
     try:
-        model_name = "HuggingFaceTB/SmolLM2-1.7B-Instruct"  # Your local model
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(model_name)
+        from langchain_community.llms import Ollama
         
-        # Determine the device
-        if torch.backends.mps.is_available():
-            device = torch.device("mps")
-            logger.info("MPS (GPU) detected. Using MPS for inference.")
-        elif torch.cuda.is_available():
-            device = torch.device("cuda")
-            logger.info("CUDA (GPU) detected. Using CUDA for inference.")
-        else:
-            device = torch.device("cpu")
-            logger.info("No GPU detected. Using CPU for inference.")
-        
-        # Set device index: GPU (0), MPS and CPU (-1)
-        if device.type == "cuda":
-            device_index = 0  # Assuming single GPU
-        else:
-            device_index = -1  # MPS and CPU
-        
-        pipe = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            device=device_index,  # Use 0 for CUDA GPUs, -1 for CPU/MPS
-            max_new_tokens=512,  # Use max_new_tokens instead of max_length
+        # Initialize Ollama with the desired model
+        llm = Ollama(
+            model="llama3.2:3b",  # یا هر مدل دیگری که در Ollama نصب دارید
+            base_url="http://localhost:11434",
             temperature=0.7,
             top_p=0.9,
-            repetition_penalty=1.2,
-            do_sample=True  # Enable sampling
+            num_ctx=2048,  # Maximum context length
+            repeat_penalty=1.2,
         )
-        llm = HuggingFacePipeline(pipeline=pipe)
-        logger.info("LLM pipeline initialized.")
+        
+        logger.info("Ollama LLM initialized successfully.")
         return llm
     except Exception as e:
-        logger.error(f"Failed to load local LLM: {e}")
+        logger.error(f"Failed to load Ollama LLM: {e}")
         return None
 
 # مرحله 7: تعریف زنجیره ConversationalRetrievalChain
