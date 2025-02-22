@@ -105,7 +105,7 @@ interface SharedUser {
         <!-- Action Buttons -->
         <div class="p-4 border-t flex-shrink-0" *ngIf="selectedProject">
           <div class="grid grid-cols-2 gap-2">
-            <button (click)="showCreateText = true"
+            <button (click)="createText()"
                     class="bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center group relative">
               <i class="pi pi-file-edit text-xl"></i>
               <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
@@ -266,34 +266,7 @@ interface SharedUser {
     </div>
 
     <!-- Create/Edit Text Modal -->
-    <div *ngIf="showCreateText || editingText" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div class="bg-white rounded-lg p-6 w-full max-w-2xl">
-        <h2 class="text-xl font-bold mb-4">
-          {{editingText ? 'Edit Text' : 'Create New Text'}}
-        </h2>
-        <div class="mb-4">
-          <label class="block text-gray-700 text-sm font-bold mb-2">Title</label>
-          <input type="text" [(ngModel)]="currentText.title"
-                 class="w-full px-3 py-2 border rounded">
-        </div>
-        <div class="mb-4">
-          <label class="block text-gray-700 text-sm font-bold mb-2">Content</label>
-          <textarea [(ngModel)]="currentText.content"
-                   rows="10"
-                   class="w-full px-3 py-2 border rounded"></textarea>
-        </div>
-        <div class="flex justify-end gap-2">
-          <button (click)="cancelTextEdit()"
-                  class="px-4 py-2 border rounded">
-            Cancel
-          </button>
-          <button (click)="saveText()"
-                  class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
-            Save
-          </button>
-        </div>
-      </div>
-    </div>
+    <div *ngIf="showCreateText || editingText"></div>
 
     <!-- Upload File Modal -->
     <div *ngIf="showUploadFile" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
@@ -483,6 +456,8 @@ export class ProjectListComponent implements OnInit {
   projectSharedUsers: SharedUser[] = [];
   textSharedUsers: SharedUser[] = [];
 
+  autoSaveTimeout: any;
+
   constructor(
     private projectService: ProjectService,
     private textService: TextService,
@@ -577,6 +552,39 @@ export class ProjectListComponent implements OnInit {
       },
       error: (error) => {
         console.error('Error creating project:', error);
+      }
+    });
+  }
+
+  createText(): void {
+    if (!this.selectedProject) return;
+
+    this.textService.createText(
+      'Untitled',  // Default title
+      ' ',         // Non-empty content string to satisfy backend validation
+      [this.selectedProject.id]
+    ).subscribe({
+      next: (newText) => {
+        // Add the new text to the project texts array
+        this.projectTexts.push(newText);
+        
+        // Set as selected text with all required properties
+        this.selectedText = {
+          id: newText.id,
+          title: newText.title || 'Untitled',
+          content: newText.content || ' ',
+          created_at: newText.created_at,
+          updated_at: newText.updated_at,
+          owner_id: newText.owner_id
+        };
+        
+        this.selectedDocument = null;
+        
+        // Load shared users for the new text
+        this.loadTextSharedUsers();
+      },
+      error: (error) => {
+        console.error('Error creating text:', error);
       }
     });
   }
@@ -797,12 +805,28 @@ export class ProjectListComponent implements OnInit {
   }
 
   autoSaveText(): void {
-    if (this.selectedText && this.selectedProject) {
+    if (!this.selectedText?.id || !this.selectedProject?.id) {
+      console.warn('Cannot save text: missing text ID or project');
+      return;
+    }
+
+    // Store references to avoid null checks in the timeout
+    const textId = this.selectedText.id;
+    const projectId = this.selectedProject.id;
+    const title = this.selectedText.title || 'Untitled';
+    const content = this.selectedText.content || ' ';
+
+    // Add debounce to prevent too many requests
+    if (this.autoSaveTimeout) {
+      clearTimeout(this.autoSaveTimeout);
+    }
+
+    this.autoSaveTimeout = setTimeout(() => {
       this.textService.updateText(
-        this.selectedText.id,
-        this.selectedText.title,
-        this.selectedText.content,
-        [this.selectedProject.id]
+        textId,
+        title,
+        content,
+        [projectId]
       ).subscribe({
         next: (updatedText) => {
           const index = this.projectTexts.findIndex(t => t.id === updatedText.id);
@@ -814,7 +838,7 @@ export class ProjectListComponent implements OnInit {
           console.error('Error updating text:', error);
         }
       });
-    }
+    }, 1000); // Wait 1 second after last change before saving
   }
 
   getPdfUrl(doc: Document): string {
