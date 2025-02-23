@@ -125,7 +125,7 @@ interface SharedUser {
 
         <!-- Action Buttons -->
         <div class="p-4 border-t flex-shrink-0" *ngIf="selectedProject">
-          <div class="grid grid-cols-3 gap-2">
+          <div class="grid grid-cols-2 gap-2">
             <button (click)="createText()"
                     class="bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center group relative">
               <i class="pi pi-file-edit text-xl"></i>
@@ -138,19 +138,6 @@ interface SharedUser {
               <i class="pi pi-upload text-xl"></i>
               <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                 Upload File
-              </span>
-            </button>
-            <button (click)="toggleRecording()"
-                    [class.bg-red-500]="isRecording"
-                    [class.hover:bg-red-600]="isRecording"
-                    [class.bg-blue-500]="!isRecording"
-                    [class.hover:bg-blue-600]="!isRecording"
-                    class="text-white p-3 rounded-lg flex items-center justify-center group relative">
-              <i [class.pi-microphone]="!isRecording"
-                 [class.pi-stop-circle]="isRecording"
-                 class="pi text-xl"></i>
-              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                {{isRecording ? 'Stop Recording' : 'Record Audio'}}
               </span>
             </button>
           </div>
@@ -215,23 +202,40 @@ interface SharedUser {
                   Shared by: {{selectedText.owner?.email}}
                 </span>
               </div>
-              <div class="space-x-2 flex-shrink-0">
-                <span *ngIf="isRecording" class="text-red-500 animate-pulse mr-2">
-                  Recording...
-                </span>
-                <span *ngIf="isTranscribing" class="text-blue-500 animate-pulse mr-2">
-                  Transcribing...
-                </span>
-                <button (click)="showShareText = true"
-                        class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
-                  <i class="pi pi-share-alt mr-1"></i>
-                  Share
-                </button>
-                <button (click)="deleteText(selectedText.id)"
-                        class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
-                  <i class="pi pi-trash mr-1"></i>
-                  Delete
-                </button>
+              <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2">
+                  <div class="flex items-center min-w-[100px] justify-end">
+                    <span *ngIf="isRecording" class="text-red-500 animate-pulse">
+                      Recording...
+                    </span>
+                    <span *ngIf="isTranscribing" class="text-blue-500 animate-pulse">
+                      Transcribing...
+                    </span>
+                  </div>
+                  <button (click)="toggleRecording()"
+                          [class.bg-red-500]="isRecording"
+                          [class.hover:bg-red-600]="isRecording"
+                          [class.bg-blue-500]="!isRecording"
+                          [class.hover:bg-blue-600]="!isRecording"
+                          class="text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                    <i [class.pi-microphone]="!isRecording"
+                       [class.pi-stop-circle]="isRecording"
+                       class="pi"></i>
+                    {{isRecording ? 'Stop Recording' : 'Record Audio'}}
+                  </button>
+                </div>
+                <div class="flex items-center gap-2 border-l pl-4">
+                  <button (click)="showShareText = true"
+                          class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
+                    <i class="pi pi-share-alt mr-1"></i>
+                    Share
+                  </button>
+                  <button (click)="deleteText(selectedText.id)"
+                          class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
+                    <i class="pi pi-trash mr-1"></i>
+                    Delete
+                  </button>
+                </div>
               </div>
             </div>
             <div class="flex-1 relative">
