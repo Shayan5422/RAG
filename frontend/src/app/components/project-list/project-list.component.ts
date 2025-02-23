@@ -148,13 +148,18 @@ interface SelectedItem {
             </button>
           </div>
 
-          <!-- Breadcrumb Navigation -->
+          <!-- Breadcrumb Navigation with Back and Forward -->
           <div class="p-4 border-b flex items-center gap-2 text-sm" *ngIf="currentFolder">
-            <button (click)="currentFolder = null" class="text-blue-500 hover:text-blue-700">
+            <button (click)="currentFolder = null; folderBackStack = []; folderForwardStack = []" class="text-blue-500 hover:text-blue-700">
               <i class="pi pi-home"></i>
             </button>
-            <i class="pi pi-chevron-right text-gray-400"></i>
+            <button *ngIf="folderBackStack.length > 0" (click)="goBackFolder()" class="text-blue-500 hover:text-blue-700">
+              <i class="pi pi-arrow-left"></i>
+            </button>
             <span class="text-gray-700">{{currentFolder.name}}</span>
+            <button *ngIf="folderForwardStack.length > 0" (click)="goForwardFolder()" class="text-blue-500 hover:text-blue-700">
+              <i class="pi pi-arrow-right"></i>
+            </button>
           </div>
 
           <!-- Folders and Files List -->
@@ -1031,6 +1036,10 @@ export class ProjectListComponent implements OnInit {
     return result;
   }
 
+  // Added folder navigation properties and methods
+  folderBackStack: Folder[] = [];
+  folderForwardStack: Folder[] = [];
+
   constructor(
     private projectService: ProjectService,
     private textService: TextService,
@@ -1405,6 +1414,9 @@ export class ProjectListComponent implements OnInit {
     this.selectedText = null;
     this.question = '';
     this.answer = '';
+    this.folderBackStack = [];
+    this.folderForwardStack = [];
+    this.currentFolder = null;
   }
 
   isDocument(item: Document | UserText): item is Document {
@@ -2049,7 +2061,11 @@ export class ProjectListComponent implements OnInit {
   }
 
   selectFolder(folder: Folder): void {
+    if (this.currentFolder) {
+      this.folderBackStack.push(this.currentFolder);
+    }
     this.currentFolder = folder;
+    this.folderForwardStack = [];
   }
 
   editFolder(folder: Folder): void {
@@ -2176,5 +2192,24 @@ export class ProjectListComponent implements OnInit {
 
   isEditingFolderDisabled(folderId: number): boolean {
     return folderId === this.editingFolder.id;
+  }
+
+  // Added folder navigation methods
+  goBackFolder(): void {
+    if (this.folderBackStack.length > 0) {
+      if (this.currentFolder) {
+        this.folderForwardStack.push(this.currentFolder);
+      }
+      this.currentFolder = this.folderBackStack.pop()!;
+    }
+  }
+
+  goForwardFolder(): void {
+    if (this.folderForwardStack.length > 0) {
+      if (this.currentFolder) {
+        this.folderBackStack.push(this.currentFolder);
+      }
+      this.currentFolder = this.folderForwardStack.pop()!;
+    }
   }
 } 
