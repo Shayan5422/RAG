@@ -12,7 +12,7 @@ export interface ChatResponse {
   providedIn: 'root'
 })
 export class RagService {
-  private apiUrl = 'http://localhost:8000';  // This will be proxied to the backend
+  private apiUrl = 'https://api.neurocorengine.com';  // This will be proxied to the backend
 
   constructor(private http: HttpClient) {}
 

@@ -125,7 +125,7 @@ export class RegisterComponent {
     formData.append('email', this.credentials.email);
     formData.append('password', this.credentials.password);
 
-    this.http.post('http://localhost:8000/register', formData)
+    this.http.post('https://api.neurocorengine.com/register', formData)
       .subscribe({
         next: () => {
           this.isLoading = false;

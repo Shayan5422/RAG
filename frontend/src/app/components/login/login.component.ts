@@ -111,7 +111,7 @@ export class LoginComponent {
     formData.append('username', this.credentials.username);
     formData.append('password', this.credentials.password);
 
-    this.http.post<{access_token: string}>('http://localhost:8000/token', formData)
+    this.http.post<{access_token: string}>('https://api.neurocorengine.com/token', formData)
       .subscribe({
         next: (response) => {
           localStorage.setItem('token', response.access_token);

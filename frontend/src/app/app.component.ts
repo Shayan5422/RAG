@@ -259,7 +259,7 @@ export class AppComponent implements OnInit {
 
   viewDocument(doc: any): void {
     this.viewingDocument = doc;
-    this.pdfUrl = `http://localhost:8000${doc.file_path}`;
+    this.pdfUrl = `https://api.neurocorengine.com${doc.file_path}`;
     this.showPdfViewer = true;
   }
 

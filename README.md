@@ -49,7 +49,7 @@ python app.py
 
 2. Open your web browser and navigate to:
 ```
-http://localhost:8000
+https://api.neurocorengine.com
 ```
 
 3. Upload a PDF file and ask questions about its content.

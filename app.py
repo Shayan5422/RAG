@@ -28,9 +28,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get environment variables
-API_HOST = os.getenv('API_HOST', '0.0.0.0')
-API_PORT = int(os.getenv('API_PORT', '8000'))
-CORS_ORIGINS = json.loads(os.getenv('CORS_ORIGINS', '["http://localhost:4200"]'))
+
 
 from extract_text import extract_text_from_pdf
 from embeding import (
@@ -73,7 +71,7 @@ app = FastAPI()
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=["http://localhost:4300", "https://api.neurocorengine.com", "https://neurocorengine.com"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2069,4 +2067,4 @@ async def cancel_summarize(task_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host=API_HOST, port=API_PORT) 
+    uvicorn.run(app, host="0.0.0.0", port=8001) 
