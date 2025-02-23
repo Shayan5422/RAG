@@ -33,6 +33,22 @@ class Project(Base):
     documents = relationship("Document", back_populates="project")
     chats = relationship("Chat", back_populates="project")
     shared_users = relationship("User", secondary="project_shares", back_populates="shared_projects")
+    folders = relationship("Folder", back_populates="project")
+
+class Folder(Base):
+    __tablename__ = "folders"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"))
+    parent_folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    project = relationship("Project", back_populates="folders")
+    parent_folder = relationship("Folder", remote_side=[id], backref="child_folders")
+    documents = relationship("Document", back_populates="folder")
+    texts = relationship("UserText", back_populates="folder")
 
 class ProjectShare(Base):
     __tablename__ = "project_shares"
@@ -49,10 +65,12 @@ class Document(Base):
     content = Column(Text)
     file_path = Column(String)
     project_id = Column(Integer, ForeignKey("projects.id"))
+    folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     project = relationship("Project", back_populates="documents")
+    folder = relationship("Folder", back_populates="documents")
 
 class Chat(Base):
     __tablename__ = "chats"
@@ -75,12 +93,14 @@ class UserText(Base):
     title = Column(String, index=True)
     content = Column(Text)
     user_id = Column(Integer, ForeignKey("users.id"))
+    folder_id = Column(Integer, ForeignKey("folders.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     user = relationship("User", back_populates="texts")
     projects = relationship("Project", secondary="text_project_association")
     shared_users = relationship("User", secondary="text_shares", back_populates="shared_texts")
+    folder = relationship("Folder", back_populates="texts")
 
 class TextShare(Base):
     __tablename__ = "text_shares"

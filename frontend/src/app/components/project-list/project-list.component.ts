@@ -37,6 +37,27 @@ interface ProjectSuggestionResponse {
   };
 }
 
+interface Folder {
+  id: number;
+  name: string;
+  project_id: number;
+  parent_folder_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface FolderWithItems extends Folder {
+  folders: FolderWithItems[];
+  documents: Document[];
+  texts: UserText[];
+  isExpanded?: boolean;
+}
+
+interface SelectedItem {
+  id: number;
+  type: 'document' | 'text';
+}
+
 @Component({
   selector: 'app-project-list',
   standalone: true,
@@ -119,21 +140,139 @@ interface ProjectSuggestionResponse {
 
         <!-- Files and Texts List -->
         <div class="flex-1 overflow-y-auto" *ngIf="selectedProject">
-          <!-- Files List -->
+          <!-- Create Folder Button -->
+          <div class="p-4 border-b">
+            <button (click)="showCreateFolder = true"
+                    class="w-full bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
+              <i class="pi pi-folder-plus mr-2"></i>Create Folder
+            </button>
+          </div>
+
+          <!-- Breadcrumb Navigation -->
+          <div class="p-4 border-b flex items-center gap-2 text-sm" *ngIf="currentFolder">
+            <button (click)="currentFolder = null" class="text-blue-500 hover:text-blue-700">
+              <i class="pi pi-home"></i>
+            </button>
+            <i class="pi pi-chevron-right text-gray-400"></i>
+            <span class="text-gray-700">{{currentFolder.name}}</span>
+          </div>
+
+          <!-- Folders and Files List -->
           <div class="p-4 space-y-2">
-            <ng-container *ngFor="let item of getAllItems()">
-              <div (click)="toggleItem(item, $event)"
-                   class="p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center gap-2"
-                   [class.bg-blue-100]="selectedItems.includes(item.id)"
-                   [class.bg-green-100]="isItemSelected(item)">
-                <i [class]="getItemIcon(item)" 
-                   [class.text-red-500]="isDocument(item)"
-                   [class.text-green-500]="!isDocument(item)"></i>
-                <span class="truncate text-sm">{{getItemName(item)}}</span>
-                <span *ngIf="selectedItems.includes(item.id)" class="text-xs text-blue-600 ml-auto">
-                  Selected for Chat
-                </span>
-              </div>
+            <!-- Root Level Items when no folder is selected -->
+            <ng-container *ngIf="!currentFolder">
+              <!-- Folders -->
+              <ng-container *ngFor="let folder of folderStructure">
+                <div class="flex items-center group">
+                  <div (click)="selectFolder(folder)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i class="pi pi-folder mr-2 text-yellow-500"></i>
+                    <span class="truncate">{{folder.name}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="editFolder(folder)"
+                            class="text-gray-500 hover:text-blue-500 p-1">
+                      <i class="pi pi-pencil"></i>
+                    </button>
+                    <button (click)="deleteFolder(folder)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
+
+              <!-- Root Documents -->
+              <ng-container *ngFor="let doc of projectDocuments">
+                <div *ngIf="!doc.folder_id" class="flex items-center group">
+                  <div (click)="toggleItem(doc, $event)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i [class]="getItemIcon(doc)" class="mr-2 text-red-500"></i>
+                    <span class="truncate">{{doc.name}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="deleteDocument(doc.id)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
+
+              <!-- Root Texts -->
+              <ng-container *ngFor="let text of projectTexts">
+                <div *ngIf="!text.folder_id" class="flex items-center group">
+                  <div (click)="toggleItem(text, $event)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i [class]="getItemIcon(text)" class="mr-2 text-green-500"></i>
+                    <span class="truncate">{{text.title}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="deleteText(text.id)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
+            </ng-container>
+
+            <!-- Folder Contents when a folder is selected -->
+            <ng-container *ngIf="currentFolder">
+              <!-- Nested Folders -->
+              <ng-container *ngFor="let folder of findFolderById(currentFolder.id)?.folders">
+                <div class="flex items-center group">
+                  <div (click)="selectFolder(folder)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i class="pi pi-folder mr-2 text-yellow-500"></i>
+                    <span class="truncate">{{folder.name}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="editFolder(folder)"
+                            class="text-gray-500 hover:text-blue-500 p-1">
+                      <i class="pi pi-pencil"></i>
+                    </button>
+                    <button (click)="deleteFolder(folder)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
+
+              <!-- Folder Documents -->
+              <ng-container *ngFor="let doc of findFolderById(currentFolder.id)?.documents">
+                <div class="flex items-center group">
+                  <div (click)="toggleItem(doc, $event)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i [class]="getItemIcon(doc)" class="mr-2 text-red-500"></i>
+                    <span class="truncate">{{doc.name}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="deleteDocument(doc.id)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
+
+              <!-- Folder Texts -->
+              <ng-container *ngFor="let text of findFolderById(currentFolder.id)?.texts">
+                <div class="flex items-center group">
+                  <div (click)="toggleItem(text, $event)"
+                       class="flex-1 p-2 rounded cursor-pointer hover:bg-gray-100 flex items-center">
+                    <i [class]="getItemIcon(text)" class="mr-2 text-green-500"></i>
+                    <span class="truncate">{{text.title}}</span>
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1">
+                    <button (click)="deleteText(text.id)"
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </ng-container>
             </ng-container>
           </div>
         </div>
@@ -347,35 +486,28 @@ interface ProjectSuggestionResponse {
 
             <!-- Chat Interface -->
             <div *ngIf="!selectedDocument && !selectedText" class="bg-white rounded-lg shadow-sm p-6">
-              <h3 class="text-xl font-bold mb-4">Chat</h3>
-              
-              <!-- Selected Items Summary -->
-              <div class="mb-4 p-4 bg-gray-50 rounded-lg" *ngIf="selectedItems.length > 0">
-                <h4 class="font-semibold mb-2">Selected Items:</h4>
-                <div class="space-y-2">
-                  <div *ngFor="let itemId of selectedItems" class="flex items-center justify-between">
-                    <span>{{getItemNameById(itemId)}}</span>
-                    <button (click)="removeFromSelection(itemId)" 
-                            class="text-red-500 hover:text-red-700">
-                      <i class="pi pi-times"></i>
-                    </button>
-                  </div>
+              <div class="flex justify-between items-center mb-4">
+                <h3 class="text-xl font-bold">Chat</h3>
+                <div class="text-sm text-gray-500">
+                  <span *ngIf="currentFolder">
+                    Asking about folder: {{currentFolder.name}}
+                  </span>
+                  <span *ngIf="!currentFolder">
+                    Asking about project: {{selectedProject.name}}
+                  </span>
                 </div>
               </div>
 
               <div class="mb-4">
                 <textarea [(ngModel)]="question"
-                         placeholder="Ask a question..."
+                         placeholder="Ask a question about the current context..."
                          rows="3"
                          class="w-full p-3 border rounded-lg"></textarea>
               </div>
               
-              <div class="flex justify-between items-center">
-                <div class="text-sm text-gray-500">
-                  Selected items: {{selectedItems.length}}
-                </div>
+              <div class="flex justify-end">
                 <button (click)="askQuestion()"
-                        [disabled]="!question || selectedItems.length === 0"
+                        [disabled]="!question"
                         class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
                   Ask
                 </button>
@@ -601,6 +733,74 @@ interface ProjectSuggestionResponse {
         </div>
       </div>
     </div>
+
+    <!-- Create Folder Modal -->
+    <div *ngIf="showCreateFolder" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-6 w-96">
+        <h2 class="text-xl font-bold mb-4">Create New Folder</h2>
+        <div class="mb-4">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Folder Name</label>
+          <input type="text" [(ngModel)]="newFolder.name"
+                 class="w-full px-3 py-2 border rounded">
+        </div>
+        <div class="mb-4" *ngIf="folderStructure.length > 0">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Parent Folder (Optional)</label>
+          <select [(ngModel)]="newFolder.parent_folder_id"
+                  class="w-full px-3 py-2 border rounded">
+            <option [ngValue]="null">None (Root Level)</option>
+            <option *ngFor="let folder of folderStructure" [value]="folder.id">
+              {{folder.name}}
+            </option>
+          </select>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button (click)="showCreateFolder = false"
+                  class="px-4 py-2 border rounded">
+            Cancel
+          </button>
+          <button (click)="createFolder()"
+                  [disabled]="!newFolder.name"
+                  class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit Folder Modal -->
+    <div *ngIf="showEditFolder" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-6 w-96">
+        <h2 class="text-xl font-bold mb-4">Edit Folder</h2>
+        <div class="mb-4">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Folder Name</label>
+          <input type="text" [(ngModel)]="editingFolder.name"
+                 class="w-full px-3 py-2 border rounded">
+        </div>
+        <div class="mb-4" *ngIf="folderStructure.length > 0">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Parent Folder (Optional)</label>
+          <select [(ngModel)]="editingFolder.parent_folder_id"
+                  class="w-full px-3 py-2 border rounded">
+            <option [ngValue]="null">None (Root Level)</option>
+            <option *ngFor="let folder of folderStructure" 
+                    [value]="folder.id"
+                    [disabled]="isEditingFolderDisabled(folder.id)">
+              {{folder.name}}
+            </option>
+          </select>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button (click)="showEditFolder = false"
+                  class="px-4 py-2 border rounded">
+            Cancel
+          </button>
+          <button (click)="saveEditedFolder()"
+                  [disabled]="!editingFolder.name"
+                  class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   `,
   styles: [`
     :host ::ng-deep .editor-container {
@@ -670,6 +870,7 @@ export class ProjectListComponent implements OnInit {
   showCreateProject = false;
   newProject = { name: '', description: '' };
 
+  selectedItems: SelectedItem[] = [];
   selectedProject: Project | null = null;
   projectTexts: UserText[] = [];
   showCreateText = false;
@@ -683,7 +884,6 @@ export class ProjectListComponent implements OnInit {
   activeTab = 'chat';
   question = '';
   answer = '';
-  selectedItems: number[] = [];
 
   selectedDocument: Document | null = null;
   selectedText: UserText | null = null;
@@ -725,6 +925,21 @@ export class ProjectListComponent implements OnInit {
   projectSuggestions: ProjectSuggestion[] = [];
   showProjectSuggestions = false;
   suggestedNewProject: { name: string; description: string } | null = null;
+
+  // Folder-related properties
+  currentFolder: Folder | null = null;
+  folderStructure: FolderWithItems[] = [];
+  showCreateFolder = false;
+  newFolder = { name: '', parent_folder_id: null as number | null };
+  showEditFolder = false;
+  editingFolder: Folder = {
+    id: 0,
+    name: '',
+    project_id: 0,
+    parent_folder_id: null,
+    created_at: '',
+    updated_at: ''
+  };
 
   constructor(
     private projectService: ProjectService,
@@ -793,7 +1008,6 @@ export class ProjectListComponent implements OnInit {
     this.selectedProject = project;
     this.selectedDocument = null;
     this.selectedText = null;
-    this.selectedItems = [];
     this.question = '';
     this.answer = '';
     this.loadProjectContent();
@@ -806,6 +1020,7 @@ export class ProjectListComponent implements OnInit {
     this.textService.getTexts(this.selectedProject.id).subscribe({
       next: (texts) => {
         this.projectTexts = texts;
+        this.organizeFolderContents();
       },
       error: (error) => {
         console.error('Error loading texts:', error);
@@ -815,11 +1030,14 @@ export class ProjectListComponent implements OnInit {
     this.projectService.getDocuments(this.selectedProject.id).subscribe({
       next: (documents) => {
         this.projectDocuments = documents;
+        this.organizeFolderContents();
       },
       error: (error) => {
         console.error('Error loading documents:', error);
       }
     });
+
+    this.loadFolderStructure();
   }
 
   createProject(): void {
@@ -844,30 +1062,22 @@ export class ProjectListComponent implements OnInit {
     if (!this.selectedProject) return;
 
     this.textService.createText(
-      'Untitled',  // Default title
-      ' ',         // Non-empty content string to satisfy backend validation
-      [this.selectedProject.id]
+      'Untitled',
+      ' ',
+      [this.selectedProject.id],
+      this.currentFolder?.id
     ).subscribe({
       next: (newText) => {
-        // Add the new text to the project texts array
-        this.projectTexts.push(newText);
-        
-        // Set as selected text with all required properties
-        this.selectedText = {
-          id: newText.id,
-          title: newText.title || 'Untitled',
-          content: newText.content || ' ',
-          created_at: newText.created_at,
-          updated_at: newText.updated_at,
-          user_id: newText.user_id,
-          owner_id: newText.owner_id,
-          is_shared: newText.is_shared ?? false
-        };
-        
-        this.selectedDocument = null;
-        
-        // Load shared users for the new text
-        this.loadTextSharedUsers();
+        this.refreshProjectContent();
+        // Select the newly created text after refresh
+        setTimeout(() => {
+          const text = this.projectTexts.find(t => t.id === newText.id);
+          if (text) {
+            this.selectedText = text;
+            this.selectedDocument = null;
+            this.loadTextSharedUsers();
+          }
+        }, 100);
       },
       error: (error) => {
         console.error('Error creating text:', error);
@@ -932,7 +1142,10 @@ export class ProjectListComponent implements OnInit {
     if (confirm('Are you sure you want to delete this text?')) {
       this.textService.deleteText(id).subscribe({
         next: () => {
-          this.projectTexts = this.projectTexts.filter(t => t.id !== id);
+          if (this.selectedText?.id === id) {
+            this.selectedText = null;
+          }
+          this.refreshProjectContent();
         },
         error: (error) => {
           console.error('Error deleting text:', error);
@@ -951,14 +1164,21 @@ export class ProjectListComponent implements OnInit {
   uploadFile(): void {
     if (!this.selectedFile || !this.selectedProject) return;
 
+    const formData = new FormData();
+    formData.append('file', this.selectedFile);
+    if (this.currentFolder) {
+      formData.append('folder_id', this.currentFolder.id.toString());
+    }
+
     this.projectService.uploadDocument(
       this.selectedProject.id,
-      this.selectedFile
+      this.selectedFile,
+      this.currentFolder?.id
     ).subscribe({
       next: () => {
-        this.loadProjectContent();
         this.showUploadFile = false;
         this.selectedFile = null;
+        this.refreshProjectContent();
       },
       error: (error) => {
         console.error('Error uploading document:', error);
@@ -969,10 +1189,13 @@ export class ProjectListComponent implements OnInit {
   askQuestion(): void {
     if (!this.selectedProject || !this.question) return;
 
+    const contextId = this.currentFolder ? this.currentFolder.id : this.selectedProject.id;
+    const contextType = this.currentFolder ? 'folder' : 'project';
+
     this.projectService.askQuestion(
-      this.selectedProject.id,
+      contextId,
       this.question,
-      this.selectedItems
+      contextType
     ).subscribe({
       next: (response) => {
         this.answer = response.answer;
@@ -985,21 +1208,29 @@ export class ProjectListComponent implements OnInit {
   }
 
   toggleItem(item: Document | UserText, event: MouseEvent): void {
-    if (event.ctrlKey || event.metaKey) {
-      // اگر کلید Ctrl یا Command (در مک) نگه داشته شده، برای چت انتخاب می‌کنیم
-      const itemId = item.id;
-      const index = this.selectedItems.indexOf(itemId);
-      if (index === -1) {
-        this.selectedItems.push(itemId);
+    const itemId = item.id;
+    const isDoc = this.isDocument(item);
+
+    // Handle normal click for viewing/editing
+    if (isDoc) {
+      // Clicking on a document
+      if (this.selectedDocument?.id === itemId) {
+        // If clicking the same document, deselect it
+        this.selectedDocument = null;
       } else {
-        this.selectedItems.splice(index, 1);
+        // If clicking a different document, select it and clear text selection
+        this.selectedDocument = item as Document;
+        this.selectedText = null;
       }
     } else {
-      // کلیک عادی برای نمایش/ویرایش
-      if (this.isDocument(item)) {
-        this.toggleDocument(item);
+      // Clicking on a text
+      if (this.selectedText?.id === itemId) {
+        // If clicking the same text, deselect it
+        this.selectedText = null;
       } else {
-        this.toggleText(item);
+        // If clicking a different text, select it and clear document selection
+        this.selectedText = item as UserText;
+        this.selectedDocument = null;
       }
     }
   }
@@ -1020,7 +1251,9 @@ export class ProjectListComponent implements OnInit {
     } else {
       this.selectedText = text;
       this.selectedDocument = null;
-      this.loadTextSharedUsers();
+      if (text.id) {  // Only load shared users if text has an ID
+        this.loadTextSharedUsers();
+      }
     }
   }
 
@@ -1028,7 +1261,6 @@ export class ProjectListComponent implements OnInit {
     this.selectedProject = null;
     this.selectedDocument = null;
     this.selectedText = null;
-    this.selectedItems = [];
     this.question = '';
     this.answer = '';
   }
@@ -1078,18 +1310,6 @@ export class ProjectListComponent implements OnInit {
     return this.selectedProject !== null && this.selectedProject.id === project.id;
   }
 
-  getItemNameById(id: number): string {
-    const item = this.getAllItems().find(i => this.isDocument(i) ? i.id === id : i.id === id);
-    return item ? this.getItemName(item) : '';
-  }
-
-  removeFromSelection(id: number): void {
-    const index = this.selectedItems.indexOf(id);
-    if (index !== -1) {
-      this.selectedItems.splice(index, 1);
-    }
-  }
-
   autoSaveText(): void {
     if (!this.selectedText?.id || !this.selectedProject?.id) {
       console.warn('Cannot save text: missing text ID or project');
@@ -1101,6 +1321,7 @@ export class ProjectListComponent implements OnInit {
     const projectId = this.selectedProject.id;
     const title = this.selectedText.title || 'Untitled';
     const content = this.selectedText.content || ' ';
+    const folderId = this.selectedText.folder_id;
 
     // Add debounce to prevent too many requests
     if (this.autoSaveTimeout) {
@@ -1112,13 +1333,11 @@ export class ProjectListComponent implements OnInit {
         textId,
         title,
         content,
-        [projectId]
+        [projectId],
+        folderId
       ).subscribe({
-        next: (updatedText) => {
-          const index = this.projectTexts.findIndex(t => t.id === updatedText.id);
-          if (index !== -1) {
-            this.projectTexts[index] = updatedText;
-          }
+        next: () => {
+          this.refreshProjectContent();
         },
         error: (error) => {
           console.error('Error updating text:', error);
@@ -1206,7 +1425,9 @@ export class ProjectListComponent implements OnInit {
   }
 
   loadTextSharedUsers(): void {
-    if (!this.selectedText) return;
+    if (!this.selectedText?.id) {
+      return;  // Don't try to load shared users if no text is selected or ID is undefined
+    }
 
     this.textService.getTextSharedUsers(this.selectedText.id)
       .subscribe({
@@ -1225,8 +1446,10 @@ export class ProjectListComponent implements OnInit {
     if (confirm('Are you sure you want to delete this document?')) {
       this.projectService.deleteDocument(this.selectedProject.id, id).subscribe({
         next: () => {
-          this.projectDocuments = this.projectDocuments.filter(d => d.id !== id);
-          this.selectedDocument = null;
+          if (this.selectedDocument?.id === id) {
+            this.selectedDocument = null;
+          }
+          this.refreshProjectContent();
         },
         error: (error) => {
           console.error('Error deleting document:', error);
@@ -1541,5 +1764,254 @@ export class ProjectListComponent implements OnInit {
       // If no projectIds provided, show suggestions modal
       this.suggestProjectForText();
     }
+  }
+
+  // Folder-related methods
+  createFolder(): void {
+    if (!this.selectedProject || !this.newFolder.name) return;
+
+    this.http.post<Folder>(
+      `http://localhost:8000/projects/${this.selectedProject.id}/folders`,
+      this.newFolder
+    ).subscribe({
+      next: () => {
+        this.showCreateFolder = false;
+        this.newFolder = { name: '', parent_folder_id: null };
+        this.refreshProjectContent();
+      },
+      error: (error) => {
+        console.error('Error creating folder:', error);
+      }
+    });
+  }
+
+  loadFolderStructure(): void {
+    if (!this.selectedProject) return;
+
+    this.http.get<Folder[]>(
+      `http://localhost:8000/projects/${this.selectedProject.id}/folders`
+    ).subscribe({
+      next: (folders) => {
+        // Build folder tree structure
+        this.folderStructure = this.buildFolderTree(folders);
+        this.organizeFolderContents();
+      },
+      error: (error) => {
+        console.error('Error loading folders:', error);
+      }
+    });
+  }
+
+  buildFolderTree(folders: Folder[]): FolderWithItems[] {
+    const folderMap = new Map<number, FolderWithItems>();
+    const rootFolders: FolderWithItems[] = [];
+
+    // First pass: create FolderWithItems objects
+    folders.forEach(folder => {
+      folderMap.set(folder.id, {
+        ...folder,
+        folders: [],
+        documents: [],
+        texts: [],
+        isExpanded: false
+      });
+    });
+
+    // Second pass: build tree structure
+    folders.forEach(folder => {
+      const folderWithItems = folderMap.get(folder.id)!;
+      if (folder.parent_folder_id === null) {
+        rootFolders.push(folderWithItems);
+      } else {
+        const parentFolder = folderMap.get(folder.parent_folder_id);
+        if (parentFolder) {
+          parentFolder.folders.push(folderWithItems);
+        }
+      }
+    });
+
+    return rootFolders;
+  }
+
+  organizeFolderContents(): void {
+    if (!this.selectedProject) return;
+
+    // Reset all folder contents
+    const resetFolderContents = (folder: FolderWithItems) => {
+      folder.documents = [];
+      folder.texts = [];
+      folder.folders.forEach(resetFolderContents);
+    };
+    this.folderStructure.forEach(resetFolderContents);
+
+    // Organize documents by folder
+    this.projectDocuments.forEach(doc => {
+      if (doc.folder_id) {
+        const folder = this.findFolderById(doc.folder_id);
+        if (folder) {
+          folder.documents.push(doc);
+        }
+      }
+    });
+
+    // Organize texts by folder
+    this.projectTexts.forEach(text => {
+      if (text.folder_id) {
+        const folder = this.findFolderById(text.folder_id);
+        if (folder) {
+          folder.texts.push(text);
+        }
+      }
+    });
+  }
+
+  findFolderById(folderId: number): FolderWithItems | null {
+    const searchInFolders = (folders: FolderWithItems[]): FolderWithItems | null => {
+      for (const folder of folders) {
+        if (folder.id === folderId) {
+          return folder;
+        }
+        const found = searchInFolders(folder.folders);
+        if (found) {
+          return found;
+        }
+      }
+      return null;
+    };
+    return searchInFolders(this.folderStructure);
+  }
+
+  toggleFolder(folder: FolderWithItems): void {
+    folder.isExpanded = !folder.isExpanded;
+  }
+
+  selectFolder(folder: Folder): void {
+    this.currentFolder = folder;
+  }
+
+  editFolder(folder: Folder): void {
+    this.editingFolder = { ...folder };
+    this.showEditFolder = true;
+  }
+
+  saveEditedFolder(): void {
+    if (!this.selectedProject) return;
+
+    this.http.put<Folder>(
+      `http://localhost:8000/projects/${this.selectedProject.id}/folders/${this.editingFolder.id}`,
+      this.editingFolder
+    ).subscribe({
+      next: () => {
+        this.showEditFolder = false;
+        this.editingFolder = {
+          id: 0,
+          name: '',
+          project_id: 0,
+          parent_folder_id: null,
+          created_at: '',
+          updated_at: ''
+        };
+        this.refreshProjectContent();
+      },
+      error: (error) => {
+        console.error('Error updating folder:', error);
+      }
+    });
+  }
+
+  deleteFolder(folder: Folder): void {
+    if (!this.selectedProject) return;
+
+    if (confirm('Are you sure you want to delete this folder and move its contents to root?')) {
+      this.http.delete(
+        `http://localhost:8000/projects/${this.selectedProject.id}/folders/${folder.id}`
+      ).subscribe({
+        next: () => {
+          if (this.currentFolder?.id === folder.id) {
+            this.currentFolder = null;
+          }
+          this.refreshProjectContent();
+        },
+        error: (error) => {
+          console.error('Error deleting folder:', error);
+        }
+      });
+    }
+  }
+
+  // Add refreshProjectContent method
+  refreshProjectContent(): void {
+    if (!this.selectedProject) return;
+
+    // Store current selections
+    const currentTextId = this.selectedText?.id;
+    const currentDocId = this.selectedDocument?.id;
+    const currentFolderId = this.currentFolder?.id;
+
+    // Reload all content
+    this.textService.getTexts(this.selectedProject.id).subscribe({
+      next: (texts) => {
+        this.projectTexts = texts;
+        // Restore text selection if it exists
+        if (currentTextId) {
+          this.selectedText = texts.find(t => t.id === currentTextId) || null;
+          if (this.selectedText) {
+            this.loadTextSharedUsers();
+          }
+        }
+      },
+      error: (error) => {
+        console.error('Error loading texts:', error);
+      }
+    });
+
+    this.projectService.getDocuments(this.selectedProject.id).subscribe({
+      next: (documents) => {
+        this.projectDocuments = documents;
+        // Restore document selection if it exists
+        if (currentDocId) {
+          this.selectedDocument = documents.find(d => d.id === currentDocId) || null;
+        }
+      },
+      error: (error) => {
+        console.error('Error loading documents:', error);
+      }
+    });
+
+    // Reload folder structure
+    this.http.get<Folder[]>(
+      `http://localhost:8000/projects/${this.selectedProject.id}/folders`
+    ).subscribe({
+      next: (folders) => {
+        this.folderStructure = this.buildFolderTree(folders);
+        // Restore folder selection if it exists
+        if (currentFolderId) {
+          this.currentFolder = folders.find(f => f.id === currentFolderId) || null;
+        }
+        this.organizeFolderContents();
+      },
+      error: (error) => {
+        console.error('Error loading folders:', error);
+      }
+    });
+  }
+
+  // Add these methods before the constructor
+  isItemSelectedForChat(id: number, type: 'document' | 'text'): boolean {
+    return this.selectedItems.some((item: SelectedItem) => item.id === id && item.type === type);
+  }
+
+  getItemNameById(id: number): string {
+    const item = [...this.projectDocuments, ...this.projectTexts].find(i => i.id === id);
+    if (!item) return '';
+    return this.isDocument(item) ? item.name : item.title;
+  }
+
+  removeFromSelection(id: number, type: 'document' | 'text'): void {
+    this.selectedItems = this.selectedItems.filter(item => !(item.id === id && item.type === type));
+  }
+
+  isEditingFolderDisabled(folderId: number): boolean {
+    return folderId === this.editingFolder.id;
   }
 } 

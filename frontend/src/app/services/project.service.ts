@@ -21,9 +21,10 @@ export interface Project {
 export interface Document {
   id: number;
   name: string;
-  content?: string;
+  content: string;
   file_path: string;
   project_id: number;
+  folder_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,9 +58,12 @@ export class ProjectService {
     return this.http.get<Project>(`${this.apiUrl}/projects/${id}`);
   }
 
-  uploadDocument(projectId: number, file: File): Observable<any> {
+  uploadDocument(projectId: number, file: File, folder_id?: number | null): Observable<any> {
     const formData = new FormData();
     formData.append('file', file);
+    if (folder_id !== undefined && folder_id !== null) {
+      formData.append('folder_id', folder_id.toString());
+    }
     return this.http.post(`${this.apiUrl}/projects/${projectId}/documents`, formData);
   }
 
@@ -67,14 +71,14 @@ export class ProjectService {
     return this.http.get<Document[]>(`${this.apiUrl}/projects/${projectId}/documents`);
   }
 
-  askQuestion(projectId: number, question: string, documentIds: number[]): Observable<any> {
+  askQuestion(contextId: number, question: string, contextType: 'project' | 'folder'): Observable<any> {
     const data = {
       question: question,
-      document_ids: documentIds
+      context_type: contextType
     };
     
     return this.http.post(
-      `${this.apiUrl}/projects/${projectId}/ask`,
+      `${this.apiUrl}/${contextType}s/${contextId}/ask`,
       data,
       {
         headers: {

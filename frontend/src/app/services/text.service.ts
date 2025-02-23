@@ -10,12 +10,10 @@ export interface UserText {
   updated_at: string;
   user_id: number;
   owner_id: number;
-  owner?: {
-    id: number;
-    email: string;
-  };
+  owner?: any;
   shared_users?: SharedUser[];
   is_shared?: boolean;
+  folder_id?: number | null;
 }
 
 export interface SharedUser {
@@ -32,11 +30,12 @@ export class TextService {
 
   constructor(private http: HttpClient) { }
 
-  createText(title: string, content: string, projectIds: number[] = []): Observable<UserText> {
+  createText(title: string, content: string, project_ids: number[], folder_id?: number | null): Observable<UserText> {
     return this.http.post<UserText>(`${this.apiUrl}/texts`, {
       title,
       content,
-      project_ids: projectIds
+      project_ids,
+      folder_id
     });
   }
 
@@ -51,11 +50,12 @@ export class TextService {
     return this.http.get<UserText>(`${this.apiUrl}/texts/${id}`);
   }
 
-  updateText(id: number, title: string, content: string, projectIds: number[] = []): Observable<UserText> {
+  updateText(id: number, title: string, content: string, project_ids: number[], folder_id?: number | null): Observable<UserText> {
     return this.http.put<UserText>(`${this.apiUrl}/texts/${id}`, {
       title,
       content,
-      project_ids: projectIds
+      project_ids,
+      folder_id
     });
   }
 

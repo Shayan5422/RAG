@@ -11,7 +11,7 @@ from pathlib import Path
 import tempfile
 from datetime import timedelta, datetime
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import requests
 import base64
 import json
@@ -30,8 +30,8 @@ from embeding import (
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 import logging
-from models import User, Chat, Project, Document, UserText, TextProjectAssociation, ProjectShare, TextShare
-from schemas import ShareRequest, UserResponse, ProjectResponse, TextResponse
+from models import User, Chat, Project, Document, UserText, TextProjectAssociation, ProjectShare, TextShare, Folder
+from schemas import ShareRequest, UserResponse, ProjectResponse, TextResponse, FolderResponse
 from auth import (
     get_db,
     get_current_user,
@@ -417,15 +417,16 @@ async def get_project(
 async def upload_project_document(
     project_id: int,
     file: UploadFile = File(...),
+    folder_id: Optional[int] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    # Check if user owns or has shared access to the project
+    # Check project access
     project = db.query(Project).filter(
         (Project.id == project_id) &
         (
-            (Project.user_id == current_user.id) |  # User is owner
-            Project.id.in_(  # User has shared access
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
                 db.query(ProjectShare.project_id)
                 .filter(ProjectShare.user_id == current_user.id)
             )
@@ -435,30 +436,45 @@ async def upload_project_document(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
 
+    # If folder_id is provided, verify it exists
+    if folder_id:
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.project_id == project_id
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
     try:
         # Create project directory if it doesn't exist
         project_dir = UPLOAD_DIR / str(project_id)
         project_dir.mkdir(exist_ok=True)
-        
-        # Save file
-        file_path = project_dir / file.filename
+
+        # If folder is specified, create nested folder structure
+        if folder_id:
+            folder_path = project_dir / str(folder_id)
+            folder_path.mkdir(exist_ok=True)
+            file_path = folder_path / file.filename
+            relative_path = f"/uploads/{project_id}/{folder_id}/{file.filename}"
+        else:
+            file_path = project_dir / file.filename
+            relative_path = f"/uploads/{project_id}/{file.filename}"
+
         with file_path.open("wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        # Create relative path for database storage
-        relative_path = f"/uploads/{project_id}/{file.filename}"
 
         # Extract text from the uploaded file
         text = extract_text_from_pdf(str(file_path))
         if not text:
             raise HTTPException(status_code=500, detail="Failed to extract text from the file")
 
-        # Create document record with relative path
+        # Create document record
         document = Document(
             name=file.filename,
             content=text,
-            file_path=relative_path,  # Store relative path
-            project_id=project_id
+            file_path=relative_path,
+            project_id=project_id,
+            folder_id=folder_id
         )
         db.add(document)
         db.commit()
@@ -473,11 +489,13 @@ async def upload_project_document(
         return {
             "message": "Document uploaded successfully",
             "document_id": document.id,
-            "file_path": relative_path  # Return relative path
+            "file_path": relative_path
         }
     except Exception as e:
         logger.error(f"Error uploading document: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        file.file.close()
 
 @app.get("/projects/{project_id}/documents")
 async def get_project_documents(
@@ -576,29 +594,23 @@ async def ask_project_question(
         # Get request body
         body = await request.json()
         question = body.get('question')
-        selected_ids = body.get('document_ids', [])
+        context_type = body.get('context_type', 'project')  # Default to project context
 
         if not question:
             raise HTTPException(status_code=400, detail="Question is required")
-        if not selected_ids:
-            raise HTTPException(status_code=400, detail="At least one document or text must be selected")
 
-        # Get selected documents
+        # Get all documents and texts in the project
         documents = db.query(Document).filter(
-            Document.id.in_(selected_ids),
-            Document.project_id == project_id
+            Document.project_id == project_id,
+            Document.folder_id == None  # Only root level documents for project context
         ).all()
 
-        # Get selected texts
         texts = db.query(UserText).join(TextProjectAssociation).filter(
-            UserText.id.in_(selected_ids),
-            TextProjectAssociation.project_id == project_id
+            TextProjectAssociation.project_id == project_id,
+            UserText.folder_id == None  # Only root level texts for project context
         ).all()
 
-        if not documents and not texts:
-            raise HTTPException(status_code=404, detail="No documents or texts found")
-
-        # Combine texts from selected documents and texts
+        # Combine texts from documents and texts
         all_texts = []
         
         # Add document contents
@@ -616,7 +628,7 @@ async def ask_project_question(
                     all_texts.extend(chunks)
 
         if not all_texts:
-            raise HTTPException(status_code=400, detail="No valid content found in selected items")
+            raise HTTPException(status_code=400, detail="No valid content found in project")
 
         # Create documents for embedding
         doc_objects = create_documents(all_texts)
@@ -679,20 +691,31 @@ async def create_text(
     title = body.get('title')
     content = body.get('content')
     project_ids = body.get('project_ids', [])
+    folder_id = body.get('folder_id')  # Optional folder ID
 
     if not title or not content:
         raise HTTPException(status_code=400, detail="Title and content are required")
 
+    # If folder_id is provided, verify it exists and belongs to one of the projects
+    if folder_id:
+        folder = db.query(Folder).filter(
+            Folder.id == folder_id,
+            Folder.project_id.in_(project_ids)
+        ).first()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found or doesn't belong to specified projects")
+
     text = UserText(
         title=title,
         content=content,
-        user_id=current_user.id
+        user_id=current_user.id,
+        folder_id=folder_id
     )
     db.add(text)
     db.commit()
     db.refresh(text)
 
-    # Associate with projects if specified
+    # Associate with projects
     if project_ids:
         for project_id in project_ids:
             association = TextProjectAssociation(
@@ -1539,6 +1562,307 @@ async def suggest_project(
                 "description": "Project created from text content"
             }
         }
+
+# Folder Management Endpoints
+@app.post("/projects/{project_id}/folders")
+async def create_folder(
+    project_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    body = await request.json()
+    name = body.get('name')
+    parent_folder_id = body.get('parent_folder_id')  # Optional
+
+    if not name:
+        raise HTTPException(status_code=400, detail="Folder name is required")
+
+    # If parent_folder_id is provided, verify it exists and user has access
+    if parent_folder_id:
+        parent_folder = db.query(Folder).filter(
+            Folder.id == parent_folder_id,
+            Folder.project_id == project_id
+        ).first()
+        if not parent_folder:
+            raise HTTPException(status_code=404, detail="Parent folder not found")
+
+    folder = Folder(
+        name=name,
+        project_id=project_id,
+        parent_folder_id=parent_folder_id
+    )
+    db.add(folder)
+    db.commit()
+    db.refresh(folder)
+    return folder
+
+@app.get("/projects/{project_id}/folders")
+async def get_folders(
+    project_id: int,
+    parent_folder_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    query = db.query(Folder).filter(
+        Folder.project_id == project_id,
+        Folder.parent_folder_id == parent_folder_id
+    )
+    folders = query.all()
+    return folders
+
+@app.put("/projects/{project_id}/folders/{folder_id}")
+async def update_folder(
+    project_id: int,
+    folder_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check project and folder access
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.project_id == project_id
+    ).first()
+    
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    body = await request.json()
+    name = body.get('name')
+    new_parent_id = body.get('parent_folder_id')
+
+    if name:
+        folder.name = name
+    if new_parent_id is not None:
+        # Verify new parent folder exists if provided
+        if new_parent_id:
+            new_parent = db.query(Folder).filter(
+                Folder.id == new_parent_id,
+                Folder.project_id == project_id
+            ).first()
+            if not new_parent:
+                raise HTTPException(status_code=404, detail="New parent folder not found")
+            # Prevent circular reference
+            if new_parent_id == folder_id:
+                raise HTTPException(status_code=400, detail="Cannot set folder as its own parent")
+        folder.parent_folder_id = new_parent_id
+
+    db.commit()
+    db.refresh(folder)
+    return folder
+
+@app.delete("/projects/{project_id}/folders/{folder_id}")
+async def delete_folder(
+    project_id: int,
+    folder_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check project and folder access
+    folder = db.query(Folder).filter(
+        Folder.id == folder_id,
+        Folder.project_id == project_id
+    ).first()
+    
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (Project.user_id == current_user.id)  # Only owner can delete folders
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    try:
+        # Delete all nested folders recursively
+        def delete_nested_folders(folder_id):
+            nested_folders = db.query(Folder).filter(
+                Folder.parent_folder_id == folder_id
+            ).all()
+            for nested_folder in nested_folders:
+                delete_nested_folders(nested_folder.id)
+                db.delete(nested_folder)
+
+        delete_nested_folders(folder_id)
+
+        # Update documents and texts to remove folder association
+        db.query(Document).filter(Document.folder_id == folder_id).update(
+            {"folder_id": None}
+        )
+        db.query(UserText).filter(UserText.folder_id == folder_id).update(
+            {"folder_id": None}
+        )
+
+        # Delete the folder itself
+        db.delete(folder)
+        db.commit()
+        return {"message": "Folder and all nested folders deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/folders/{folder_id}/ask")
+async def ask_folder_question(
+    folder_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Get the folder and verify access
+    folder = db.query(Folder).filter(Folder.id == folder_id).first()
+    if not folder:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == folder.project_id) &
+        (
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    try:
+        # Get request body
+        body = await request.json()
+        question = body.get('question')
+
+        if not question:
+            raise HTTPException(status_code=400, detail="Question is required")
+
+        # Get all documents and texts in the folder
+        documents = db.query(Document).filter(
+            Document.folder_id == folder_id
+        ).all()
+
+        texts = db.query(UserText).filter(
+            UserText.folder_id == folder_id
+        ).all()
+
+        # Combine texts from documents and texts
+        all_texts = []
+        
+        # Add document contents
+        for doc in documents:
+            if doc.content and len(doc.content.strip()) > 0:
+                chunks = split_text(doc.content)
+                if chunks:
+                    all_texts.extend(chunks)
+
+        # Add text contents
+        for text in texts:
+            if text.content and len(text.content.strip()) > 0:
+                chunks = split_text(text.content)
+                if chunks:
+                    all_texts.extend(chunks)
+
+        if not all_texts:
+            raise HTTPException(status_code=400, detail="No valid content found in folder")
+
+        # Create documents for embedding
+        doc_objects = create_documents(all_texts)
+        if not doc_objects:
+            raise HTTPException(status_code=400, detail="Failed to create document objects from content")
+
+        embedding_model = create_embeddings(doc_objects)
+        if not embedding_model:
+            raise HTTPException(status_code=500, detail="Failed to initialize embedding model")
+
+        vectorstore = store_embeddings(doc_objects, embedding_model)
+        if not vectorstore:
+            raise HTTPException(status_code=500, detail="Failed to create vector store")
+        
+        # Load LLM and create QA chain
+        llm = load_local_llm()
+        if not llm:
+            raise HTTPException(status_code=500, detail="Failed to initialize language model")
+
+        qa_chain = create_qa_chain(llm, vectorstore)
+        if not qa_chain:
+            raise HTTPException(status_code=500, detail="Failed to create QA chain")
+        
+        # Get answer
+        chat_history = []
+        response = qa_chain({"question": question, "chat_history": chat_history})
+        answer = response.get("answer", "Sorry, I couldn't find an answer to your question.")
+
+        # Save chat history
+        source_names = []
+        if documents:
+            source_names.extend(doc.name for doc in documents)
+        if texts:
+            source_names.extend(text.title for text in texts)
+
+        chat = Chat(
+            user_id=current_user.id,
+            project_id=project.id,
+            question=question,
+            answer=answer,
+            document_name=f"Folder: {folder.name} - {', '.join(source_names)}"
+        )
+        db.add(chat)
+        db.commit()
+        
+        return {"answer": answer}
+        
+    except Exception as e:
+        logger.error(f"Error in folder question endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

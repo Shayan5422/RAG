@@ -264,7 +264,7 @@ export class AppComponent implements OnInit {
     this.projectService.askQuestion(
       this.selectedProject.id,
       this.question,
-      this.selectedItems
+      'project'
     ).subscribe({
       next: (response) => {
         this.answer = response.answer;
