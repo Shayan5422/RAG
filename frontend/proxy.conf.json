@@ -10,5 +10,10 @@
     "headers": {
       "Connection": "keep-alive"
     }
+  },
+  "/api": {
+    "target": "${API_URL}",
+    "secure": false,
+    "changeOrigin": true
   }
 } 

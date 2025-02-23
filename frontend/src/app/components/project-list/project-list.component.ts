@@ -12,6 +12,7 @@ import 'quill/dist/quill.bubble.css';
 import { QUILL_CONFIG_TOKEN } from 'ngx-quill';
 import { HttpClient } from '@angular/common/http';
 import { QuillEditorComponent } from 'ngx-quill';
+import { environment } from '../../../environments/environment';
 
 interface ProjectWithStats extends Project {
   documentCount: number;
@@ -1045,6 +1046,8 @@ export class ProjectListComponent implements OnInit {
   currentSummarizeTaskId: string | null = null;
   statusCheckInterval: any;
 
+  private apiUrl = environment.apiUrl;
+
   // Getter to provide a flattened list of folders with indentation level
   get flattenedFolders(): { folder: FolderWithItems, level: number }[] {
     const result: { folder: FolderWithItems, level: number }[] = [];
@@ -1077,7 +1080,7 @@ export class ProjectListComponent implements OnInit {
   }
 
   loadCurrentUser(): void {
-    this.http.get<any>('http://localhost:8000/me').subscribe({
+    this.http.get<any>(`${this.apiUrl}/me`).subscribe({
       next: (user) => {
         this.currentUserId = user.id;
       },
@@ -1525,9 +1528,7 @@ export class ProjectListComponent implements OnInit {
   }
 
   getPdfUrl(doc: Document): string {
-    const baseUrl = 'http://localhost:8000';
-    const filePath = doc.file_path.startsWith('/') ? doc.file_path : `/${doc.file_path}`;
-    return `${baseUrl}${filePath}`;
+    return `${this.apiUrl}${doc.file_path}`;
   }
 
   shareProjectWithUser(): void {
@@ -1683,7 +1684,7 @@ export class ProjectListComponent implements OnInit {
 
     this.isTranscribing = true;
 
-    this.http.post<any>('http://localhost:8000/transcribe-audio', formData)
+    this.http.post<any>(`${this.apiUrl}/transcribe-audio`, formData)
       .subscribe({
         next: (response) => {
           if (this.selectedText) {
@@ -1874,7 +1875,7 @@ export class ProjectListComponent implements OnInit {
 
     this.isProcessingAISuggestion = true;
     try {
-      const response = await this.http.post<ProjectSuggestionResponse>('http://localhost:8000/suggest-project', {
+      const response = await this.http.post<ProjectSuggestionResponse>(`${this.apiUrl}/suggest-project`, {
         title: this.newTextContent.title,
         content: this.newTextContent.content
       }).toPromise();
@@ -1970,7 +1971,7 @@ export class ProjectListComponent implements OnInit {
     }
 
     this.http.post<Folder>(
-      `http://localhost:8000/projects/${this.selectedProject.id}/folders`,
+      `${this.apiUrl}/projects/${this.selectedProject.id}/folders`,
       this.newFolder
     ).subscribe({
       next: () => {
@@ -1988,7 +1989,7 @@ export class ProjectListComponent implements OnInit {
     if (!this.selectedProject) return;
 
     this.http.get<Folder[]>(
-      `http://localhost:8000/projects/${this.selectedProject.id}/folders`
+      `${this.apiUrl}/projects/${this.selectedProject.id}/folders`
     ).subscribe({
       next: (folders) => {
         // Build folder tree structure
@@ -2101,7 +2102,7 @@ export class ProjectListComponent implements OnInit {
     if (!this.selectedProject) return;
 
     this.http.put<Folder>(
-      `http://localhost:8000/projects/${this.selectedProject.id}/folders/${this.editingFolder.id}`,
+      `${this.apiUrl}/projects/${this.selectedProject.id}/folders/${this.editingFolder.id}`,
       this.editingFolder
     ).subscribe({
       next: () => {
@@ -2127,7 +2128,7 @@ export class ProjectListComponent implements OnInit {
 
     if (confirm('Are you sure you want to delete this folder and move its contents to root?')) {
       this.http.delete(
-        `http://localhost:8000/projects/${this.selectedProject.id}/folders/${folder.id}`
+        `${this.apiUrl}/projects/${this.selectedProject.id}/folders/${folder.id}`
       ).subscribe({
         next: () => {
           if (this.currentFolder?.id === folder.id) {
@@ -2183,7 +2184,7 @@ export class ProjectListComponent implements OnInit {
 
     // Reload folder structure
     this.http.get<Folder[]>(
-      `http://localhost:8000/projects/${this.selectedProject.id}/folders`
+      `${this.apiUrl}/projects/${this.selectedProject.id}/folders`
     ).subscribe({
       next: (folders) => {
         this.folderStructure = this.buildFolderTree(folders);
@@ -2251,7 +2252,7 @@ export class ProjectListComponent implements OnInit {
     }
 
     // Start the summarization process
-    this.http.post<any>('http://localhost:8000/summarize', payload).subscribe({
+    this.http.post<any>(`${this.apiUrl}/summarize`, payload).subscribe({
       next: (response) => {
         if (response.task_id) {
           this.currentSummarizeTaskId = response.task_id;
@@ -2269,7 +2270,7 @@ export class ProjectListComponent implements OnInit {
     if (!this.currentSummarizeTaskId) return;
 
     this.statusCheckInterval = setInterval(() => {
-      this.http.get<any>(`http://localhost:8000/summarize/${this.currentSummarizeTaskId}/status`).subscribe({
+      this.http.get<any>(`${this.apiUrl}/summarize/${this.currentSummarizeTaskId}/status`).subscribe({
         next: (response) => {
           if (response.status === 'processing') {
             this.summarizeStatus = "Processing files...";
@@ -2289,7 +2290,7 @@ export class ProjectListComponent implements OnInit {
   // Add method to cancel summarization
   cancelSummarize(): void {
     if (this.currentSummarizeTaskId) {
-      this.http.delete<any>(`http://localhost:8000/summarize/${this.currentSummarizeTaskId}`).subscribe({
+      this.http.delete<any>(`${this.apiUrl}/summarize/${this.currentSummarizeTaskId}`).subscribe({
         next: () => {
           clearInterval(this.statusCheckInterval);
           this.summarizeStatus = "Summarization cancelled.";
@@ -2356,7 +2357,7 @@ export class ProjectListComponent implements OnInit {
       openButton.textContent = 'Open in New Tab';
       openButton.className = 'bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600';
       openButton.onclick = () => {
-        window.open(`http://localhost:8000${response.pdf_url}`, '_blank');
+        window.open(`${this.apiUrl}${response.pdf_url}`, '_blank');
       };
 
       // Download button
@@ -2365,7 +2366,7 @@ export class ProjectListComponent implements OnInit {
       downloadButton.className = 'bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600';
       downloadButton.onclick = () => {
         const link = document.createElement('a');
-        link.href = `http://localhost:8000${response.pdf_url}`;
+        link.href = `${this.apiUrl}${response.pdf_url}`;
         link.download = response.pdf_url.split('/').pop() || 'summary.pdf';
         document.body.appendChild(link);
         link.click();
