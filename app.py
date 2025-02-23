@@ -1115,10 +1115,31 @@ async def get_text_shared_users(
 @app.post("/transcribe-audio")
 async def transcribe_audio(
     file: UploadFile = File(...),
+    text_id: int = Form(...),  # Add text_id parameter
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
+        # First check if the text exists and user has access
+        text = db.query(UserText).filter(
+            (UserText.id == text_id) &
+            (
+                (UserText.user_id == current_user.id) |  # User is owner
+                UserText.id.in_(  # User has direct shared access
+                    db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+                ) |
+                UserText.id.in_(  # Text is in a shared project
+                    db.query(TextProjectAssociation.text_id)
+                    .join(Project, TextProjectAssociation.project_id == Project.id)
+                    .join(ProjectShare, ProjectShare.project_id == Project.id)
+                    .filter(ProjectShare.user_id == current_user.id)
+                )
+            )
+        ).first()
+        
+        if not text:
+            raise HTTPException(status_code=404, detail="Text not found or access denied")
+
         # Create a unique filename with timestamp
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
         filename = f"recording_{timestamp}.wav"
@@ -1136,7 +1157,6 @@ async def transcribe_audio(
         try:
             with open(file_path, "rb") as audio_file:
                 audio_content = audio_file.read()
-                audio_base64 = base64.b64encode(audio_content).decode('utf-8')
         except Exception as e:
             logger.error(f"Error reading audio file: {str(e)}")
             raise HTTPException(status_code=500, detail="Failed to read audio file")
@@ -1254,21 +1274,23 @@ async def transcribe_audio(
                 detail=f"Failed to connect to transcription service: {str(e)}"
             )
 
-        # Create a new text with the transcription
+        # Append the transcription to the existing text
         try:
-            text = UserText(
-                title=f"Transcription: {filename}",
-                content=transcription,
-                user_id=current_user.id
-            )
-            db.add(text)
+            # Add a newline if the existing content doesn't end with one
+            if text.content and not text.content.endswith('\n'):
+                text.content += '\n'
+            
+            # Append the new transcription
+            text.content += transcription
+            
+            # Update the text
             db.commit()
             db.refresh(text)
 
             return {
                 "text_id": text.id,
                 "title": text.title,
-                "content": transcription,
+                "content": text.content,
                 "created_at": text.created_at,
                 "updated_at": text.updated_at,
                 "user_id": text.user_id
@@ -1276,8 +1298,8 @@ async def transcribe_audio(
 
         except Exception as e:
             db.rollback()
-            logger.error(f"Error creating text record: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to save transcription")
+            logger.error(f"Error updating text record: {str(e)}")
+            raise HTTPException(status_code=500, detail="Failed to update text with transcription")
 
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")

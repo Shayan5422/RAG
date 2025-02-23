@@ -1,4 +1,4 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -11,6 +11,7 @@ import 'quill/dist/quill.snow.css';
 import 'quill/dist/quill.bubble.css';
 import { QUILL_CONFIG_TOKEN } from 'ngx-quill';
 import { HttpClient } from '@angular/common/http';
+import { QuillEditorComponent } from 'ngx-quill';
 
 interface ProjectWithStats extends Project {
   documentCount: number;
@@ -191,6 +192,12 @@ interface SharedUser {
                      class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
                      [class.border-gray-300]="selectedText.title === ''">
               <div class="space-x-2 flex-shrink-0">
+                <span *ngIf="isRecording" class="text-red-500 animate-pulse mr-2">
+                  Recording...
+                </span>
+                <span *ngIf="isTranscribing" class="text-blue-500 animate-pulse mr-2">
+                  Transcribing...
+                </span>
                 <button (click)="showShareText = true"
                         class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
                   <i class="pi pi-share-alt mr-1"></i>
@@ -207,8 +214,16 @@ interface SharedUser {
               <quill-editor [(ngModel)]="selectedText.content"
                             (ngModelChange)="autoSaveText()"
                             [styles]="{height: '100%'}"
+                            [readOnly]="isTranscribing"
                             class="h-full editor-container">
               </quill-editor>
+              <div *ngIf="isTranscribing" 
+                   class="absolute inset-0 bg-black bg-opacity-10 flex items-center justify-center">
+                <div class="bg-white p-4 rounded-lg shadow-lg">
+                  <i class="pi pi-spin pi-spinner text-2xl text-blue-500 mr-2"></i>
+                  Transcribing audio...
+                </div>
+              </div>
             </div>
           </div>
 
@@ -446,6 +461,7 @@ interface SharedUser {
   `]
 })
 export class ProjectListComponent implements OnInit {
+  @ViewChild(QuillEditorComponent) editor!: QuillEditorComponent;
   projects: Project[] = [];
   projectsWithStats: ProjectWithStats[] = [];
   showCreateProject = false;
@@ -1012,50 +1028,76 @@ export class ProjectListComponent implements OnInit {
   }
 
   transcribeAudio(audioBlob: Blob) {
-    if (!this.selectedProject?.id) {
-      console.error('No project selected');
-      // TODO: Show error message to user
+    if (!this.selectedText?.id) {
+      console.error('No text selected');
       return;
     }
 
     const formData = new FormData();
     formData.append('file', audioBlob, 'recording.wav');
+    formData.append('text_id', this.selectedText.id.toString());
 
-    // Show loading state
     this.isTranscribing = true;
 
     this.http.post<UserText>('http://localhost:8000/transcribe-audio', formData)
       .subscribe({
         next: (response) => {
-          // Create a new text with the transcription
-          this.textService.createText(
-            response.title || 'Untitled Transcription',
-            response.content || '',
-            [this.selectedProject!.id]
-          ).subscribe({
-            next: (newText: UserText) => {
-              this.selectedText = newText;
-              this.projectTexts.push(newText);
-              // TODO: Show success message to user
-            },
-            error: (error) => {
-              console.error('Error creating text from transcription:', error);
-              // TODO: Show error message to user
-            },
-            complete: () => {
-              this.isTranscribing = false;
+          if (this.selectedText && this.editor) {
+            // Get the Quill instance
+            const quill = this.editor.quillEditor;
+            
+            // Extract only the new transcribed text from the response
+            const existingContent = this.selectedText.content || '';
+            const newTranscribedText = response.content.substring(existingContent.length);
+            
+            // Add a line break if needed and append the new text
+            let textToAdd = newTranscribedText;
+            if (existingContent && !existingContent.endsWith('\n')) {
+              textToAdd = '\n' + textToAdd;
             }
-          });
+            
+            // Insert the new text at the end
+            const length = quill.getLength();
+            quill.insertText(length - 1, textToAdd);
+            
+            // Update the model
+            this.selectedText.content = quill.getText();
+            this.selectedText.updated_at = response.updated_at;
+            
+            // Update the text in the project texts array
+            const index = this.projectTexts.findIndex(t => t.id === response.id);
+            if (index !== -1) {
+              this.projectTexts[index] = {
+                ...this.projectTexts[index],
+                content: this.selectedText.content,
+                updated_at: response.updated_at
+              };
+            }
+
+            // Scroll to the bottom
+            setTimeout(() => {
+              const newLength = quill.getLength();
+              quill.setSelection(newLength - 1, 0);
+              const editor = document.querySelector('.ql-editor');
+              if (editor) {
+                editor.scrollTop = editor.scrollHeight;
+              }
+            }, 100);
+          }
+          
+          this.isTranscribing = false;
         },
         error: (error) => {
           console.error('Error transcribing audio:', error);
           this.isTranscribing = false;
-          // TODO: Show error message to user
-          if (error.status === 500) {
-            const errorMessage = error.error?.detail || 'Failed to transcribe audio';
-            // TODO: Show error message to user
-          }
+          const errorMessage = error.error?.detail || 'Failed to transcribe audio';
+          console.error(errorMessage);
         }
       });
+  }
+
+  // Add method to handle editor state
+  isEditorReadOnly(): boolean {
+    return this.isTranscribing;
   }
 } 
