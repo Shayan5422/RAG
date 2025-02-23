@@ -386,6 +386,14 @@ async def get_projects(
         ProjectShare.user_id == current_user.id
     ).all()
     
+    # Add owner information to each project
+    for project in owned_projects:
+        project.owner = db.query(User).filter(User.id == project.user_id).first()
+        project.is_shared = False  # Mark as not shared since user is the owner
+    for project in shared_projects:
+        project.owner = db.query(User).filter(User.id == project.user_id).first()
+        project.is_shared = True  # Mark as shared since current user is not the owner
+    
     return owned_projects + shared_projects
 
 @app.get("/projects/{project_id}")
@@ -720,10 +728,15 @@ async def get_texts(
             TextProjectAssociation.project_id == project_id
         ).all()
         
+        # Add owner information to each text
+        for text in texts:
+            text.owner = db.query(User).filter(User.id == text.user_id).first()
+            text.is_shared = (text.user_id != current_user.id)
+        
         return texts
     else:
         # Get all texts user has access to
-        return db.query(UserText).filter(
+        texts = db.query(UserText).filter(
             (
                 (UserText.user_id == current_user.id) |  # Owned texts
                 UserText.id.in_(  # Directly shared texts
@@ -738,6 +751,13 @@ async def get_texts(
                 )
             )
         ).all()
+        
+        # Add owner information to each text
+        for text in texts:
+            text.owner = db.query(User).filter(User.id == text.user_id).first()
+            text.is_shared = (text.user_id != current_user.id)
+        
+        return texts
 
 @app.get("/texts/{text_id}")
 async def get_text(
@@ -764,6 +784,8 @@ async def get_text(
     
     if not text:
         raise HTTPException(status_code=404, detail="Text not found or access denied")
+    text.owner = db.query(User).filter(User.id == text.user_id).first()
+    text.is_shared = (text.user_id != current_user.id)
     return text
 
 @app.put("/texts/{text_id}")

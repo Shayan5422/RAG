@@ -67,15 +67,22 @@ interface SharedUser {
                        class="flex-1 p-3 rounded cursor-pointer hover:bg-gray-100 flex items-center"
                        [class.bg-blue-100]="isProjectSelected(proj)">
                     <i class="pi pi-folder mr-2 text-blue-500"></i>
-                    {{proj.name}}
+                    <div class="flex flex-col">
+                      <span>{{proj.name}}</span>
+                      <span *ngIf="proj.is_shared" class="text-xs text-gray-500">
+                        Shared by: {{proj.owner?.email}}
+                      </span>
+                    </div>
                   </div>
                   <div class="hidden group-hover:flex items-center gap-1 px-2">
                     <button (click)="editProject(proj, $event)" 
-                            class="text-gray-500 hover:text-blue-500 p-1">
+                            class="text-gray-500 hover:text-blue-500 p-1"
+                            *ngIf="proj.user_id === currentUserId">
                       <i class="pi pi-pencil"></i>
                     </button>
                     <button (click)="deleteProject(proj, $event)" 
-                            class="text-gray-500 hover:text-red-500 p-1">
+                            class="text-gray-500 hover:text-red-500 p-1"
+                            *ngIf="proj.user_id === currentUserId">
                       <i class="pi pi-trash"></i>
                     </button>
                   </div>
@@ -199,10 +206,15 @@ interface SharedUser {
           <!-- Text Viewer with professional rich text editor -->
           <div *ngIf="selectedText" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
             <div class="flex justify-between items-center p-4 bg-white border-b">
-              <input [(ngModel)]="selectedText.title" 
-                     (ngModelChange)="autoSaveText()"
-                     class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
-                     [class.border-gray-300]="selectedText.title === ''">
+              <div class="flex flex-col flex-grow">
+                <input [(ngModel)]="selectedText.title" 
+                       (ngModelChange)="autoSaveText()"
+                       class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
+                       [class.border-gray-300]="selectedText.title === ''">
+                <span *ngIf="selectedText.is_shared" class="text-sm text-gray-500 mt-1">
+                  Shared by: {{selectedText.owner?.email}}
+                </span>
+              </div>
               <div class="space-x-2 flex-shrink-0">
                 <span *ngIf="isRecording" class="text-red-500 animate-pulse mr-2">
                   Recording...
@@ -546,8 +558,11 @@ export class ProjectListComponent implements OnInit {
     description: '',
     created_at: '',
     updated_at: '',
+    user_id: 0,
     owner_id: 0
   };
+
+  currentUserId: number = 0;
 
   constructor(
     private projectService: ProjectService,
@@ -557,7 +572,22 @@ export class ProjectListComponent implements OnInit {
   ) { }
 
   ngOnInit(): void {
+    this.loadCurrentUser();
     this.loadProjects();
+  }
+
+  loadCurrentUser(): void {
+    this.http.get<any>('http://localhost:8000/me').subscribe({
+      next: (user) => {
+        this.currentUserId = user.id;
+      },
+      error: (error) => {
+        console.error('Error loading current user:', error);
+        if (error.status === 401) {
+          this.router.navigate(['/login']);
+        }
+      }
+    });
   }
 
   loadProjects(): void {
@@ -667,7 +697,9 @@ export class ProjectListComponent implements OnInit {
           content: newText.content || ' ',
           created_at: newText.created_at,
           updated_at: newText.updated_at,
-          owner_id: newText.owner_id
+          user_id: newText.user_id,
+          owner_id: newText.owner_id,
+          is_shared: newText.is_shared ?? false
         };
         
         this.selectedDocument = null;
@@ -1182,7 +1214,15 @@ export class ProjectListComponent implements OnInit {
 
   editProject(project: Project, event: Event): void {
     event.stopPropagation(); // Prevent project selection
-    this.editingProject = { ...project };
+    this.editingProject = { 
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      created_at: project.created_at,
+      updated_at: project.updated_at,
+      user_id: project.user_id,
+      owner_id: project.owner_id
+    };
     this.showEditProject = true;
   }
 
@@ -1207,6 +1247,7 @@ export class ProjectListComponent implements OnInit {
           description: '',
           created_at: '',
           updated_at: '',
+          user_id: 0,
           owner_id: 0
         };
       },
@@ -1224,6 +1265,7 @@ export class ProjectListComponent implements OnInit {
       description: '',
       created_at: '',
       updated_at: '',
+      user_id: 0,
       owner_id: 0
     };
   }

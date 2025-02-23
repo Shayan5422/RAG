@@ -1,7 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { InputTextarea } from 'primeng/inputtextarea';
 import { ButtonModule } from 'primeng/button';
 import { CardModule } from 'primeng/card';
 import { AvatarModule } from 'primeng/avatar';
@@ -21,7 +20,6 @@ interface Message {
   imports: [
     CommonModule,
     FormsModule,
-    InputTextarea,
     ButtonModule,
     CardModule,
     AvatarModule

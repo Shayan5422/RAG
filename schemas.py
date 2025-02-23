@@ -30,6 +30,8 @@ class ProjectResponse(ProjectBase):
     created_at: datetime
     updated_at: datetime
     shared_users: Optional[List[UserResponse]] = None
+    owner: Optional[UserResponse] = None
+    is_shared: bool = False
 
     class Config:
         orm_mode = True
@@ -47,6 +49,8 @@ class TextResponse(TextBase):
     created_at: datetime
     updated_at: datetime
     shared_users: Optional[List[UserResponse]] = None
+    owner: Optional[UserResponse] = None
+    is_shared: bool = False
 
     class Config:
         orm_mode = True

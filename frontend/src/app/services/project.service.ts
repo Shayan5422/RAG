@@ -8,9 +8,14 @@ export interface Project {
   description: string;
   created_at: string;
   updated_at: string;
-  user_id?: number;
+  user_id: number;
   owner_id: number;
+  owner?: {
+    id: number;
+    email: string;
+  };
   shared_users?: SharedUser[];
+  is_shared?: boolean;
 }
 
 export interface Document {

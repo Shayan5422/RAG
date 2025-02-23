@@ -1,7 +1,6 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { SharedUser } from './project.service';
 
 export interface UserText {
   id: number;
@@ -9,8 +8,20 @@ export interface UserText {
   content: string;
   created_at: string;
   updated_at: string;
+  user_id: number;
   owner_id: number;
+  owner?: {
+    id: number;
+    email: string;
+  };
   shared_users?: SharedUser[];
+  is_shared?: boolean;
+}
+
+export interface SharedUser {
+  id: number;
+  email: string;
+  username: string;
 }
 
 @Injectable({
