@@ -62,11 +62,23 @@ interface SharedUser {
 
             <div class="space-y-2 overflow-y-auto">
               <ng-container *ngFor="let proj of projects; trackBy: trackByProjectId">
-                <div (click)="selectProject(proj)"
-                     class="p-3 rounded cursor-pointer hover:bg-gray-100 flex items-center"
-                     [class.bg-blue-100]="isProjectSelected(proj)">
-                  <i class="pi pi-folder mr-2 text-blue-500"></i>
-                  {{proj.name}}
+                <div class="flex items-center group">
+                  <div (click)="selectProject(proj)"
+                       class="flex-1 p-3 rounded cursor-pointer hover:bg-gray-100 flex items-center"
+                       [class.bg-blue-100]="isProjectSelected(proj)">
+                    <i class="pi pi-folder mr-2 text-blue-500"></i>
+                    {{proj.name}}
+                  </div>
+                  <div class="hidden group-hover:flex items-center gap-1 px-2">
+                    <button (click)="editProject(proj, $event)" 
+                            class="text-gray-500 hover:text-blue-500 p-1">
+                      <i class="pi pi-pencil"></i>
+                    </button>
+                    <button (click)="deleteProject(proj, $event)" 
+                            class="text-gray-500 hover:text-red-500 p-1">
+                      <i class="pi pi-trash"></i>
+                    </button>
+                  </div>
                 </div>
               </ng-container>
             </div>
@@ -399,6 +411,34 @@ interface SharedUser {
         </div>
       </div>
     </div>
+
+    <!-- Edit Project Modal -->
+    <div *ngIf="showEditProject" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
+      <div class="bg-white rounded-lg p-6 w-96">
+        <h2 class="text-xl font-bold mb-4">Edit Project</h2>
+        <div class="mb-4">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Project Name</label>
+          <input type="text" [(ngModel)]="editingProject.name"
+                 class="w-full px-3 py-2 border rounded">
+        </div>
+        <div class="mb-4">
+          <label class="block text-gray-700 text-sm font-bold mb-2">Description</label>
+          <textarea [(ngModel)]="editingProject.description"
+                   rows="3"
+                   class="w-full px-3 py-2 border rounded"></textarea>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button (click)="cancelProjectEdit()"
+                  class="px-4 py-2 border rounded">
+            Cancel
+          </button>
+          <button (click)="saveProjectEdit()"
+                  class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
   `,
   styles: [`
     :host ::ng-deep .editor-container {
@@ -498,6 +538,16 @@ export class ProjectListComponent implements OnInit {
   audioChunks: Blob[] = [];
 
   isTranscribing = false;
+
+  showEditProject = false;
+  editingProject: Project = {
+    id: 0,
+    name: '',
+    description: '',
+    created_at: '',
+    updated_at: '',
+    owner_id: 0
+  };
 
   constructor(
     private projectService: ProjectService,
@@ -1099,5 +1149,82 @@ export class ProjectListComponent implements OnInit {
   // Add method to handle editor state
   isEditorReadOnly(): boolean {
     return this.isTranscribing;
+  }
+
+  deleteProject(project: Project, event: Event): void {
+    event.stopPropagation(); // Prevent project selection
+    
+    if (confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
+      this.projectService.deleteProject(project.id).subscribe({
+        next: () => {
+          this.projects = this.projects.filter(p => p.id !== project.id);
+          if (this.selectedProject?.id === project.id) {
+            this.deselectProject();
+          }
+        },
+        error: (error) => {
+          let errorMessage = 'An error occurred while deleting the project.';
+          
+          if (error.status === 404) {
+            errorMessage = 'Project not found. It may have been already deleted.';
+          } else if (error.status === 403) {
+            errorMessage = 'You do not have permission to delete this project.';
+          } else if (error.error?.detail) {
+            errorMessage = error.error.detail;
+          }
+          
+          console.error('Error deleting project:', error);
+          alert(errorMessage);
+        }
+      });
+    }
+  }
+
+  editProject(project: Project, event: Event): void {
+    event.stopPropagation(); // Prevent project selection
+    this.editingProject = { ...project };
+    this.showEditProject = true;
+  }
+
+  saveProjectEdit(): void {
+    this.projectService.updateProject(
+      this.editingProject.id,
+      this.editingProject.name,
+      this.editingProject.description
+    ).subscribe({
+      next: (updatedProject) => {
+        const index = this.projects.findIndex(p => p.id === updatedProject.id);
+        if (index !== -1) {
+          this.projects[index] = updatedProject;
+          if (this.selectedProject?.id === updatedProject.id) {
+            this.selectedProject = updatedProject;
+          }
+        }
+        this.showEditProject = false;
+        this.editingProject = {
+          id: 0,
+          name: '',
+          description: '',
+          created_at: '',
+          updated_at: '',
+          owner_id: 0
+        };
+      },
+      error: (error) => {
+        console.error('Error updating project:', error);
+      }
+    });
+  }
+
+  cancelProjectEdit(): void {
+    this.showEditProject = false;
+    this.editingProject = {
+      id: 0,
+      name: '',
+      description: '',
+      created_at: '',
+      updated_at: '',
+      owner_id: 0
+    };
   }
 } 

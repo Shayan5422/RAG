@@ -1318,6 +1318,108 @@ async def transcribe_audio(
         
         file.file.close()
 
+@app.delete("/projects/{project_id}")
+async def delete_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Log the deletion attempt
+    logger.info(f"Attempting to delete project {project_id} by user {current_user.id}")
+
+    # First check if project exists at all
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        logger.error(f"Project {project_id} not found")
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Then check if user is the owner
+    if project.user_id != current_user.id:
+        logger.error(f"User {current_user.id} is not the owner of project {project_id}")
+        raise HTTPException(status_code=403, detail="You don't have permission to delete this project")
+
+    try:
+        # Log the deletion process
+        logger.info(f"Starting deletion process for project {project_id}")
+
+        # Delete all document files
+        for document in project.documents:
+            if document.file_path:
+                file_path = Path(document.file_path.lstrip('/'))
+                if file_path.exists():
+                    file_path.unlink()
+                    logger.info(f"Deleted document file: {file_path}")
+
+        # Delete project shares
+        shares_deleted = db.query(ProjectShare).filter(
+            ProjectShare.project_id == project_id
+        ).delete()
+        logger.info(f"Deleted {shares_deleted} project shares")
+
+        # Delete text associations
+        text_assocs_deleted = db.query(TextProjectAssociation).filter(
+            TextProjectAssociation.project_id == project_id
+        ).delete()
+        logger.info(f"Deleted {text_assocs_deleted} text associations")
+
+        # Delete documents
+        docs_deleted = db.query(Document).filter(
+            Document.project_id == project_id
+        ).delete()
+        logger.info(f"Deleted {docs_deleted} documents")
+
+        # Delete chats
+        chats_deleted = db.query(Chat).filter(
+            Chat.project_id == project_id
+        ).delete()
+        logger.info(f"Deleted {chats_deleted} chats")
+
+        # Finally delete the project
+        db.delete(project)
+        db.commit()
+        logger.info(f"Successfully deleted project {project_id}")
+        
+        return {"message": "Project deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error deleting project {project_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/projects/{project_id}")
+async def update_project(
+    project_id: int,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if user owns or has shared access to the project
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |  # User is owner
+            Project.id.in_(  # User has shared access
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    body = await request.json()
+    name = body.get('name')
+    description = body.get('description')
+
+    if name:
+        project.name = name
+    if description is not None:  # Allow empty description
+        project.description = description
+
+    db.commit()
+    db.refresh(project)
+    return project
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 

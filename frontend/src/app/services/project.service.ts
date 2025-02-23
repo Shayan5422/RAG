@@ -94,4 +94,12 @@ export class ProjectService {
   deleteDocument(projectId: number, documentId: number): Observable<any> {
     return this.http.delete(`${this.apiUrl}/projects/${projectId}/documents/${documentId}`);
   }
+
+  deleteProject(projectId: number): Observable<any> {
+    return this.http.delete(`${this.apiUrl}/projects/${projectId}`);
+  }
+
+  updateProject(projectId: number, name: string, description: string): Observable<Project> {
+    return this.http.put<Project>(`${this.apiUrl}/projects/${projectId}`, { name, description });
+  }
 } 
