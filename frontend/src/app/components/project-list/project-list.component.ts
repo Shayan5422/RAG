@@ -22,6 +22,21 @@ interface SharedUser {
   email: string;
 }
 
+interface ProjectSuggestion {
+  project_id: number;
+  name: string;
+  description: string;
+  similarity: number;
+}
+
+interface ProjectSuggestionResponse {
+  suggestions: ProjectSuggestion[];
+  new_project: {
+    name: string;
+    description: string;
+  };
+}
+
 @Component({
   selector: 'app-project-list',
   standalone: true,
@@ -146,61 +161,14 @@ interface SharedUser {
 
       <!-- Main Content -->
       <div class="flex-1 p-6 overflow-y-auto">
-        <!-- Project Header -->
-        <div *ngIf="selectedProject" class="mb-6">
-          <div class="flex justify-between items-start">
-            <div>
-              <h2 class="text-2xl font-bold">{{selectedProject.name}}</h2>
-              <p class="text-gray-600">{{selectedProject.description}}</p>
-            </div>
-            <button (click)="showShareProject = true"
-                    class="bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 flex items-center justify-center group relative">
-              <i class="pi pi-share-alt text-xl"></i>
-              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                Share Project
-              </span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Content Area -->
-        <ng-container *ngIf="selectedProject">
-          <!-- Document Viewer -->
-          <div *ngIf="selectedDocument" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
-            <div class="flex justify-between items-center p-4 bg-white border-b">
-              <h3 class="text-xl font-bold">{{selectedDocument.name}}</h3>
-              <div class="space-x-2">
-                <a [href]="getPdfUrl(selectedDocument)" 
-                   target="_blank" 
-                   class="text-blue-500 hover:text-blue-700">
-                  <i class="pi pi-external-link mr-1"></i>
-                  Open in New Tab
-                </a>
-                <button (click)="deleteDocument(selectedDocument.id)"
-                        class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
-                  <i class="pi pi-trash mr-1"></i>
-                  Delete
-                </button>
-              </div>
-            </div>
-            <div class="flex-1 bg-gray-100">
-              <iframe [src]="getPdfUrl(selectedDocument) | safeUrl" 
-                     class="w-full h-full"
-                     type="application/pdf"></iframe>
-            </div>
-          </div>
-
-          <!-- Text Viewer with professional rich text editor -->
-          <div *ngIf="selectedText" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
+        <ng-container *ngIf="!selectedProject">
+          <!-- New Text Creation Section -->
+          <div *ngIf="showNewTextCreation" class="bg-white rounded-lg shadow-sm mb-6">
             <div class="flex justify-between items-center p-4 bg-white border-b">
               <div class="flex flex-col flex-grow">
-                <input [(ngModel)]="selectedText.title" 
-                       (ngModelChange)="autoSaveText()"
-                       class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
-                       [class.border-gray-300]="selectedText.title === ''">
-                <span *ngIf="selectedText.is_shared" class="text-sm text-gray-500 mt-1">
-                  Shared by: {{selectedText.owner?.email}}
-                </span>
+                <input [(ngModel)]="newTextContent.title" 
+                       placeholder="Enter title..."
+                       class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4">
               </div>
               <div class="flex items-center gap-4">
                 <div class="flex items-center gap-2">
@@ -224,77 +192,200 @@ interface SharedUser {
                     {{isRecording ? 'Stop Recording' : 'Record Audio'}}
                   </button>
                 </div>
-                <div class="flex items-center gap-2 border-l pl-4">
-                  <button (click)="showShareText = true"
-                          class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
-                    <i class="pi pi-share-alt mr-1"></i>
-                    Share
-                  </button>
-                  <button (click)="deleteText(selectedText.id)"
+              </div>
+            </div>
+            <div class="relative">
+              <quill-editor [(ngModel)]="newTextContent.content"
+                            #newTextEditor
+                            [styles]="{height: '400px'}"
+                            [readOnly]="isTranscribing"
+                            placeholder="Start writing or recording..."
+                            class="editor-container">
+              </quill-editor>
+            </div>
+            <div class="p-4 border-t flex justify-between items-center">
+              <button (click)="cancelNewText()"
+                      class="px-4 py-2 text-gray-600 hover:text-gray-800">
+                Cancel
+              </button>
+              <div class="flex items-center gap-2">
+                <button (click)="suggestProjectForText()"
+                        [disabled]="!newTextContent.content || isProcessingAISuggestion"
+                        class="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600 disabled:bg-gray-400 flex items-center gap-2">
+                  <i class="pi pi-brain"></i>
+                  {{isProcessingAISuggestion ? 'Analyzing...' : 'Suggest Project'}}
+                </button>
+                <button (click)="saveNewText()"
+                        [disabled]="!newTextContent.content"
+                        class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400">
+                  Save Text
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Create Text Button -->
+          <div *ngIf="!showNewTextCreation" class="text-center py-12">
+            <button (click)="showNewTextCreation = true"
+                    class="bg-blue-500 text-white px-6 py-3 rounded-lg hover:bg-blue-600 flex items-center gap-2 mx-auto">
+              <i class="pi pi-plus"></i>
+              Create New Text
+            </button>
+          </div>
+        </ng-container>
+
+        <!-- Existing Project Content -->
+        <ng-container *ngIf="selectedProject">
+          <!-- Project Header -->
+          <div class="mb-6">
+            <div class="flex justify-between items-start">
+              <div>
+                <h2 class="text-2xl font-bold">{{selectedProject.name}}</h2>
+                <p class="text-gray-600">{{selectedProject.description}}</p>
+              </div>
+              <button (click)="showShareProject = true"
+                      class="bg-blue-500 text-white p-3 rounded-lg hover:bg-blue-600 flex items-center justify-center group relative">
+                <i class="pi pi-share-alt text-xl"></i>
+                <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                  Share Project
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Content Area -->
+          <ng-container *ngIf="selectedProject">
+            <!-- Document Viewer -->
+            <div *ngIf="selectedDocument" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
+              <div class="flex justify-between items-center p-4 bg-white border-b">
+                <h3 class="text-xl font-bold">{{selectedDocument.name}}</h3>
+                <div class="space-x-2">
+                  <a [href]="getPdfUrl(selectedDocument)" 
+                     target="_blank" 
+                     class="text-blue-500 hover:text-blue-700">
+                    <i class="pi pi-external-link mr-1"></i>
+                    Open in New Tab
+                  </a>
+                  <button (click)="deleteDocument(selectedDocument.id)"
                           class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
                     <i class="pi pi-trash mr-1"></i>
                     Delete
                   </button>
                 </div>
               </div>
+              <div class="flex-1 bg-gray-100">
+                <iframe [src]="getPdfUrl(selectedDocument) | safeUrl" 
+                       class="w-full h-full"
+                       type="application/pdf"></iframe>
+              </div>
             </div>
-            <div class="flex-1 relative">
-              <quill-editor [(ngModel)]="selectedText.content"
-                            (ngModelChange)="autoSaveText()"
-                            [styles]="{height: '100%'}"
-                            [readOnly]="isTranscribing"
-                            class="h-full editor-container">
-              </quill-editor>
-              <div *ngIf="isTranscribing" 
-                   class="absolute inset-0 bg-black bg-opacity-10 flex items-center justify-center">
-                <div class="bg-white p-4 rounded-lg shadow-lg">
-                  <i class="pi pi-spin pi-spinner text-2xl text-blue-500 mr-2"></i>
-                  Transcribing audio...
+
+            <!-- Text Viewer with professional rich text editor -->
+            <div *ngIf="selectedText" class="bg-white rounded-lg shadow-sm h-[calc(100vh-8rem)] flex flex-col">
+              <div class="flex justify-between items-center p-4 bg-white border-b">
+                <div class="flex flex-col flex-grow">
+                  <input [(ngModel)]="selectedText.title" 
+                         (ngModelChange)="autoSaveText()"
+                         class="text-2xl font-bold bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none px-1 w-full mr-4"
+                         [class.border-gray-300]="selectedText.title === ''">
+                  <span *ngIf="selectedText.is_shared" class="text-sm text-gray-500 mt-1">
+                    Shared by: {{selectedText.owner?.email}}
+                  </span>
+                </div>
+                <div class="flex items-center gap-4">
+                  <div class="flex items-center gap-2">
+                    <div class="flex items-center min-w-[100px] justify-end">
+                      <span *ngIf="isRecording" class="text-red-500 animate-pulse">
+                        Recording...
+                      </span>
+                      <span *ngIf="isTranscribing" class="text-blue-500 animate-pulse">
+                        Transcribing...
+                      </span>
+                    </div>
+                    <button (click)="toggleRecording()"
+                            [class.bg-red-500]="isRecording"
+                            [class.hover:bg-red-600]="isRecording"
+                            [class.bg-blue-500]="!isRecording"
+                            [class.hover:bg-blue-600]="!isRecording"
+                            class="text-white px-4 py-2 rounded-lg flex items-center gap-2">
+                      <i [class.pi-microphone]="!isRecording"
+                         [class.pi-stop-circle]="isRecording"
+                         class="pi"></i>
+                      {{isRecording ? 'Stop Recording' : 'Record Audio'}}
+                    </button>
+                  </div>
+                  <div class="flex items-center gap-2 border-l pl-4">
+                    <button (click)="showShareText = true"
+                            class="text-blue-500 hover:text-blue-700 px-4 py-2 rounded-lg border border-blue-200 hover:bg-blue-50">
+                      <i class="pi pi-share-alt mr-1"></i>
+                      Share
+                    </button>
+                    <button (click)="deleteText(selectedText.id)"
+                            class="text-red-500 hover:text-red-700 px-4 py-2 rounded-lg border border-red-200 hover:bg-red-50">
+                      <i class="pi pi-trash mr-1"></i>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="flex-1 relative">
+                <quill-editor [(ngModel)]="selectedText.content"
+                              (ngModelChange)="autoSaveText()"
+                              [styles]="{height: '100%'}"
+                              [readOnly]="isTranscribing"
+                              class="h-full editor-container">
+                </quill-editor>
+                <div *ngIf="isTranscribing" 
+                     class="absolute inset-0 bg-black bg-opacity-10 flex items-center justify-center">
+                  <div class="bg-white p-4 rounded-lg shadow-lg">
+                    <i class="pi pi-spin pi-spinner text-2xl text-blue-500 mr-2"></i>
+                    Transcribing audio...
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          <!-- Chat Interface -->
-          <div *ngIf="!selectedDocument && !selectedText" class="bg-white rounded-lg shadow-sm p-6">
-            <h3 class="text-xl font-bold mb-4">Chat</h3>
-            
-            <!-- Selected Items Summary -->
-            <div class="mb-4 p-4 bg-gray-50 rounded-lg" *ngIf="selectedItems.length > 0">
-              <h4 class="font-semibold mb-2">Selected Items:</h4>
-              <div class="space-y-2">
-                <div *ngFor="let itemId of selectedItems" class="flex items-center justify-between">
-                  <span>{{getItemNameById(itemId)}}</span>
-                  <button (click)="removeFromSelection(itemId)" 
-                          class="text-red-500 hover:text-red-700">
-                    <i class="pi pi-times"></i>
-                  </button>
+            <!-- Chat Interface -->
+            <div *ngIf="!selectedDocument && !selectedText" class="bg-white rounded-lg shadow-sm p-6">
+              <h3 class="text-xl font-bold mb-4">Chat</h3>
+              
+              <!-- Selected Items Summary -->
+              <div class="mb-4 p-4 bg-gray-50 rounded-lg" *ngIf="selectedItems.length > 0">
+                <h4 class="font-semibold mb-2">Selected Items:</h4>
+                <div class="space-y-2">
+                  <div *ngFor="let itemId of selectedItems" class="flex items-center justify-between">
+                    <span>{{getItemNameById(itemId)}}</span>
+                    <button (click)="removeFromSelection(itemId)" 
+                            class="text-red-500 hover:text-red-700">
+                      <i class="pi pi-times"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div class="mb-4">
-              <textarea [(ngModel)]="question"
-                       placeholder="Ask a question..."
-                       rows="3"
-                       class="w-full p-3 border rounded-lg"></textarea>
-            </div>
-            
-            <div class="flex justify-between items-center">
-              <div class="text-sm text-gray-500">
-                Selected items: {{selectedItems.length}}
+              <div class="mb-4">
+                <textarea [(ngModel)]="question"
+                         placeholder="Ask a question..."
+                         rows="3"
+                         class="w-full p-3 border rounded-lg"></textarea>
               </div>
-              <button (click)="askQuestion()"
-                      [disabled]="!question || selectedItems.length === 0"
-                      class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
-                Ask
-              </button>
-            </div>
+              
+              <div class="flex justify-between items-center">
+                <div class="text-sm text-gray-500">
+                  Selected items: {{selectedItems.length}}
+                </div>
+                <button (click)="askQuestion()"
+                        [disabled]="!question || selectedItems.length === 0"
+                        class="bg-blue-500 text-white px-6 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
+                  Ask
+                </button>
+              </div>
 
-            <div *ngIf="answer" class="mt-4 p-4 bg-gray-50 rounded-lg">
-              <p class="whitespace-pre-wrap">{{answer}}</p>
+              <div *ngIf="answer" class="mt-4 p-4 bg-gray-50 rounded-lg">
+                <p class="whitespace-pre-wrap">{{answer}}</p>
+              </div>
             </div>
-          </div>
+          </ng-container>
         </ng-container>
       </div>
     </div>
@@ -455,6 +546,61 @@ interface SharedUser {
         </div>
       </div>
     </div>
+
+    <!-- Project Suggestions Modal -->
+    <div *ngIf="showProjectSuggestions" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-lg p-6 w-[600px] max-h-[80vh] overflow-y-auto">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-xl font-bold">Project Suggestions</h2>
+          <button (click)="showProjectSuggestions = false" class="text-gray-500 hover:text-gray-700">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+
+        <!-- Existing Projects Suggestions -->
+        <div class="mb-6" *ngIf="projectSuggestions.length > 0">
+          <h3 class="font-semibold text-gray-700 mb-3">Similar Projects Found:</h3>
+          <div class="space-y-3">
+            <div *ngFor="let suggestion of projectSuggestions" 
+                 class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+              <div class="flex justify-between items-start mb-2">
+                <div>
+                  <h4 class="font-medium text-gray-900">{{suggestion.name}}</h4>
+                  <p class="text-sm text-gray-600">{{suggestion.description}}</p>
+                </div>
+                <span class="text-sm font-medium text-blue-600">
+                  {{(suggestion.similarity * 100).toFixed(1)}}% match
+                </span>
+              </div>
+              <button (click)="selectSuggestedProject(suggestion)"
+                      class="mt-2 w-full text-blue-600 hover:bg-blue-50 px-4 py-2 rounded-lg border border-blue-200">
+                Add to this project
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- New Project Suggestion -->
+        <div *ngIf="suggestedNewProject" class="border-t pt-6">
+          <h3 class="font-semibold text-gray-700 mb-3">Create New Project:</h3>
+          <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h4 class="font-medium text-gray-900 mb-2">{{suggestedNewProject.name}}</h4>
+            <p class="text-sm text-gray-600 mb-3">{{suggestedNewProject.description}}</p>
+            <button (click)="createSuggestedProject()"
+                    class="w-full bg-blue-600 text-white hover:bg-blue-700 px-4 py-2 rounded-lg">
+              Create New Project
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-6 flex justify-end">
+          <button (click)="showProjectSuggestions = false"
+                  class="text-gray-600 hover:text-gray-800 px-4 py-2">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
   `,
   styles: [`
     :host ::ng-deep .editor-container {
@@ -518,6 +664,7 @@ interface SharedUser {
 })
 export class ProjectListComponent implements OnInit {
   @ViewChild(QuillEditorComponent) editor!: QuillEditorComponent;
+  @ViewChild('newTextEditor') newTextEditor!: QuillEditorComponent;
   projects: Project[] = [];
   projectsWithStats: ProjectWithStats[] = [];
   showCreateProject = false;
@@ -567,6 +714,17 @@ export class ProjectListComponent implements OnInit {
   };
 
   currentUserId: number = 0;
+
+  showNewTextCreation = false;
+  newTextContent = {
+    title: '',
+    content: ''
+  };
+  isProcessingAISuggestion = false;
+
+  projectSuggestions: ProjectSuggestion[] = [];
+  showProjectSuggestions = false;
+  suggestedNewProject: { name: string; description: string } | null = null;
 
   constructor(
     private projectService: ProjectService,
@@ -1114,70 +1272,84 @@ export class ProjectListComponent implements OnInit {
   }
 
   transcribeAudio(audioBlob: Blob) {
-    if (!this.selectedText?.id) {
-      console.error('No text selected');
-      return;
-    }
-
     const formData = new FormData();
     formData.append('file', audioBlob, 'recording.wav');
-    formData.append('text_id', this.selectedText.id.toString());
+    
+    // Add text_id only if we're editing an existing text
+    if (this.selectedText?.id) {
+      formData.append('text_id', this.selectedText.id.toString());
+    }
 
     this.isTranscribing = true;
 
-    this.http.post<UserText>('http://localhost:8000/transcribe-audio', formData)
+    this.http.post<any>('http://localhost:8000/transcribe-audio', formData)
       .subscribe({
         next: (response) => {
-          if (this.selectedText && this.editor) {
-            // Get the Quill instance
-            const quill = this.editor.quillEditor;
-            
-            // Extract only the new transcribed text from the response
-            const existingContent = this.selectedText.content || '';
-            const newTranscribedText = response.content.substring(existingContent.length);
-            
-            // Add a line break if needed and append the new text
-            let textToAdd = newTranscribedText;
-            if (existingContent && !existingContent.endsWith('\n')) {
-              textToAdd = '\n' + textToAdd;
+          if (this.selectedText) {
+            // Update existing text
+            if (this.editor) {
+              const quill = this.editor.quillEditor;
+              const existingContent = this.selectedText.content || '';
+              const newTranscribedText = response.content || '';
+              
+              let textToAdd = newTranscribedText;
+              if (existingContent && !existingContent.endsWith('\n')) {
+                textToAdd = '\n' + textToAdd;
+              }
+              
+              const length = quill.getLength();
+              quill.insertText(length - 1, textToAdd);
+              
+              this.selectedText.content = quill.getText();
+              
+              // Update the text in the project texts array
+              const index = this.projectTexts.findIndex(t => t.id === this.selectedText?.id);
+              if (index !== -1) {
+                this.projectTexts[index] = {
+                  ...this.projectTexts[index],
+                  content: this.selectedText.content
+                };
+              }
             }
-            
-            // Insert the new text at the end
-            const length = quill.getLength();
-            quill.insertText(length - 1, textToAdd);
-            
-            // Update the model
-            this.selectedText.content = quill.getText();
-            this.selectedText.updated_at = response.updated_at;
-            
-            // Update the text in the project texts array
-            const index = this.projectTexts.findIndex(t => t.id === response.id);
-            if (index !== -1) {
-              this.projectTexts[index] = {
-                ...this.projectTexts[index],
-                content: this.selectedText.content,
-                updated_at: response.updated_at
-              };
+          } else {
+            // New text creation
+            if (this.newTextEditor) {
+              const quill = this.newTextEditor.quillEditor;
+              const existingContent = this.newTextContent.content || '';
+              const newTranscribedText = response.content || '';
+              
+              let textToAdd = newTranscribedText;
+              if (existingContent && !existingContent.endsWith('\n')) {
+                textToAdd = '\n' + textToAdd;
+              }
+              
+              const length = quill.getLength();
+              quill.insertText(length - 1, textToAdd);
+              
+              this.newTextContent.content = quill.getText();
             }
-
-            // Scroll to the bottom
-            setTimeout(() => {
+          }
+          
+          // Scroll to bottom in either case
+          setTimeout(() => {
+            const editor = this.selectedText ? this.editor : this.newTextEditor;
+            if (editor) {
+              const quill = editor.quillEditor;
               const newLength = quill.getLength();
               quill.setSelection(newLength - 1, 0);
-              const editor = document.querySelector('.ql-editor');
-              if (editor) {
-                editor.scrollTop = editor.scrollHeight;
+              const editorElement = document.querySelector('.ql-editor');
+              if (editorElement) {
+                editorElement.scrollTop = editorElement.scrollHeight;
               }
-            }, 100);
-          }
+            }
+          }, 100);
           
           this.isTranscribing = false;
         },
         error: (error) => {
           console.error('Error transcribing audio:', error);
           this.isTranscribing = false;
-          const errorMessage = error.error?.detail || 'Failed to transcribe audio';
-          console.error(errorMessage);
+          alert('Failed to transcribe audio. Please try again.');
         }
       });
   }
@@ -1272,5 +1444,102 @@ export class ProjectListComponent implements OnInit {
       user_id: 0,
       owner_id: 0
     };
+  }
+
+  cancelNewText(): void {
+    if (this.newTextContent.content && !confirm('Are you sure you want to discard this text?')) {
+      return;
+    }
+    this.showNewTextCreation = false;
+    this.newTextContent = { title: '', content: '' };
+  }
+
+  async suggestProjectForText(): Promise<void> {
+    if (!this.newTextContent.content) return;
+
+    this.isProcessingAISuggestion = true;
+    try {
+      const response = await this.http.post<ProjectSuggestionResponse>('http://localhost:8000/suggest-project', {
+        title: this.newTextContent.title,
+        content: this.newTextContent.content
+      }).toPromise();
+
+      if (response) {
+        this.projectSuggestions = response.suggestions;
+        this.suggestedNewProject = response.new_project;
+        this.showProjectSuggestions = true;
+      }
+
+    } catch (error) {
+      console.error('Error getting project suggestion:', error);
+      alert('Failed to get project suggestions. Please try again or save manually.');
+    } finally {
+      this.isProcessingAISuggestion = false;
+    }
+  }
+
+  async selectSuggestedProject(suggestion: ProjectSuggestion): Promise<void> {
+    const project = this.projects.find(p => p.id === suggestion.project_id);
+    if (project) {
+      if (confirm(`Would you like to add this text to project "${project.name}"? (${Math.round(suggestion.similarity * 100)}% similar)`)) {
+        this.saveNewText([project.id]);
+      }
+    }
+  }
+
+  async createSuggestedProject(): Promise<void> {
+    if (!this.suggestedNewProject) return;
+
+    if (confirm(`Would you like to create a new project "${this.suggestedNewProject.name}" for this text?`)) {
+      this.projectService.createProject(
+        this.suggestedNewProject.name,
+        this.suggestedNewProject.description
+      ).subscribe({
+        next: (newProject) => {
+          this.projects.push(newProject);
+          this.saveNewText([newProject.id]);
+        },
+        error: (error) => {
+          console.error('Error creating suggested project:', error);
+          alert('Failed to create new project. Please try again.');
+        }
+      });
+    }
+  }
+
+  saveNewText(projectIds: number[] = []): void {
+    if (!this.newTextContent.content) return;
+
+    // If projectIds are provided, save directly
+    if (projectIds.length > 0) {
+      this.textService.createText(
+        this.newTextContent.title || 'Untitled',
+        this.newTextContent.content,
+        projectIds
+      ).subscribe({
+        next: (newText) => {
+          const project = this.projects.find(p => p.id === projectIds[0]);
+          if (project) {
+            this.selectProject(project);
+            setTimeout(() => {
+              const text = this.projectTexts.find(t => t.id === newText.id);
+              if (text) {
+                this.toggleText(text);
+              }
+            }, 100);
+          }
+          this.showNewTextCreation = false;
+          this.newTextContent = { title: '', content: '' };
+          this.showProjectSuggestions = false;
+        },
+        error: (error: any) => {
+          console.error('Error creating text:', error);
+          alert('Failed to save text. Please try again.');
+        }
+      });
+    } else {
+      // If no projectIds provided, show suggestions modal
+      this.suggestProjectForText();
+    }
   }
 } 

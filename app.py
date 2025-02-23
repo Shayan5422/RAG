@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from typing import List
 import requests
 import base64
+import json
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
 
 from extract_text import extract_text_from_pdf
 from embeding import (
@@ -1137,30 +1140,31 @@ async def get_text_shared_users(
 @app.post("/transcribe-audio")
 async def transcribe_audio(
     file: UploadFile = File(...),
-    text_id: int = Form(...),  # Add text_id parameter
+    text_id: int = Form(None),  # Make text_id optional
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     try:
-        # First check if the text exists and user has access
-        text = db.query(UserText).filter(
-            (UserText.id == text_id) &
-            (
-                (UserText.user_id == current_user.id) |  # User is owner
-                UserText.id.in_(  # User has direct shared access
-                    db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
-                ) |
-                UserText.id.in_(  # Text is in a shared project
-                    db.query(TextProjectAssociation.text_id)
-                    .join(Project, TextProjectAssociation.project_id == Project.id)
-                    .join(ProjectShare, ProjectShare.project_id == Project.id)
-                    .filter(ProjectShare.user_id == current_user.id)
+        # If text_id is provided, verify access
+        if text_id is not None:
+            text = db.query(UserText).filter(
+                (UserText.id == text_id) &
+                (
+                    (UserText.user_id == current_user.id) |  # User is owner
+                    UserText.id.in_(  # User has direct shared access
+                        db.query(TextShare.text_id).filter(TextShare.user_id == current_user.id)
+                    ) |
+                    UserText.id.in_(  # Text is in a shared project
+                        db.query(TextProjectAssociation.text_id)
+                        .join(Project, TextProjectAssociation.project_id == Project.id)
+                        .join(ProjectShare, ProjectShare.project_id == Project.id)
+                        .filter(ProjectShare.user_id == current_user.id)
+                    )
                 )
-            )
-        ).first()
-        
-        if not text:
-            raise HTTPException(status_code=404, detail="Text not found or access denied")
+            ).first()
+            
+            if not text:
+                raise HTTPException(status_code=404, detail="Text not found or access denied")
 
         # Create a unique filename with timestamp
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
@@ -1208,25 +1212,21 @@ async def transcribe_audio(
                     detail="No token received from authentication service"
                 )
 
-            # Now send the transcription request with the token
             headers = {
                 'Authorization': f'Bearer {token}'
             }
             
-            # Generate a unique session ID
             session_id = f"session_{timestamp}"
             
-            # Prepare the request data as form data
             files = {
                 'file': ('chunk.wav', audio_content, 'audio/wav')
             }
             data = {
                 'chunk_number': '1',
                 'session_id': session_id,
-                'model': 'openai/whisper-large-v3-turbo'  # Add default model
+                'model': 'openai/whisper-large-v3-turbo'
             }
 
-            # Use the process-chunk endpoint
             response = requests.post(
                 'http://backend.shaz.ai/process-chunk/',
                 files=files,
@@ -1235,7 +1235,6 @@ async def transcribe_audio(
                 timeout=30
             )
 
-            # Log the response for debugging
             logger.info(f"Transcription service response status: {response.status_code}")
             logger.info(f"Transcription service response headers: {response.headers}")
             try:
@@ -1268,11 +1267,10 @@ async def transcribe_audio(
                     detail="Invalid JSON response from transcription service"
                 )
 
-            # Check for different possible response formats
             transcription = None
             if isinstance(result, dict):
                 transcription = (
-                    result.get('chunk_transcription') or  # Check for chunk_transcription first
+                    result.get('chunk_transcription') or
                     result.get('transcription') or 
                     result.get('text') or 
                     result.get('result')
@@ -1289,39 +1287,24 @@ async def transcribe_audio(
 
             logger.info(f"Successfully extracted transcription: {transcription}")
 
+            # If text_id was provided, update the existing text
+            if text_id is not None:
+                if text.content and not text.content.endswith('\n'):
+                    text.content += '\n'
+                text.content += transcription
+                db.commit()
+                db.refresh(text)
+                return text
+            else:
+                # Just return the transcribed text
+                return {"content": transcription}
+
         except requests.RequestException as e:
             logger.error(f"Error calling transcription service: {str(e)}")
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to connect to transcription service: {str(e)}"
             )
-
-        # Append the transcription to the existing text
-        try:
-            # Add a newline if the existing content doesn't end with one
-            if text.content and not text.content.endswith('\n'):
-                text.content += '\n'
-            
-            # Append the new transcription
-            text.content += transcription
-            
-            # Update the text
-            db.commit()
-            db.refresh(text)
-
-            return {
-                "text_id": text.id,
-                "title": text.title,
-                "content": text.content,
-                "created_at": text.created_at,
-                "updated_at": text.updated_at,
-                "user_id": text.user_id
-            }
-
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Error updating text record: {str(e)}")
-            raise HTTPException(status_code=500, detail="Failed to update text with transcription")
 
     except Exception as e:
         logger.error(f"Transcription error: {str(e)}")
@@ -1441,6 +1424,121 @@ async def update_project(
     db.commit()
     db.refresh(project)
     return project
+
+@app.post("/suggest-project")
+async def suggest_project(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Get request body
+        body = await request.json()
+        title = body.get('title', '')
+        content = body.get('content', '')
+
+        if not content:
+            raise HTTPException(status_code=400, detail="Content is required")
+
+        # Get all user's projects (both owned and shared)
+        owned_projects = db.query(Project).filter(Project.user_id == current_user.id).all()
+        shared_projects = db.query(Project).join(ProjectShare).filter(
+            ProjectShare.user_id == current_user.id
+        ).all()
+        all_projects = owned_projects + shared_projects
+
+        # If no existing projects, suggest creating a new one
+        if not all_projects:
+            return {
+                "suggestions": [],
+                "new_project": {
+                    "name": title[:50] if title else "New Project",
+                    "description": content[:200] + "..." if len(content) > 200 else content
+                }
+            }
+
+        try:
+            # Get embedding for new content
+            new_content_embedding = embeddings.embed_query(content)
+
+            # Store all project similarities
+            project_similarities = []
+
+            for project in all_projects:
+                # Get all texts and documents from the project
+                project_texts = db.query(UserText).join(TextProjectAssociation).filter(
+                    TextProjectAssociation.project_id == project.id
+                ).all()
+                
+                project_docs = db.query(Document).filter(
+                    Document.project_id == project.id
+                ).all()
+
+                # Combine all content
+                project_content = []
+                for text in project_texts:
+                    if text.content:
+                        project_content.append(text.content)
+                for doc in project_docs:
+                    if doc.content:
+                        project_content.append(doc.content)
+
+                if project_content:
+                    # Join all content with spaces
+                    combined_content = " ".join(project_content)
+                    
+                    # Get embedding for project content
+                    project_embedding = embeddings.embed_query(combined_content)
+                    
+                    # Calculate cosine similarity
+                    similarity = cosine_similarity(
+                        np.array(new_content_embedding).reshape(1, -1),
+                        np.array(project_embedding).reshape(1, -1)
+                    )[0][0]
+
+                    project_similarities.append({
+                        "project_id": project.id,
+                        "name": project.name,
+                        "description": project.description,
+                        "similarity": float(similarity)  # Convert numpy float to Python float
+                    })
+
+            # Sort projects by similarity and get top 3
+            project_similarities.sort(key=lambda x: x["similarity"], reverse=True)
+            top_suggestions = project_similarities[:3]
+
+            # Return both suggestions and new project option
+            return {
+                "suggestions": top_suggestions,
+                "new_project": {
+                    "name": title[:50] if title else "New Project",
+                    "description": content[:200] + "..." if len(content) > 200 else content
+                }
+            }
+
+        except Exception as e:
+            logger.error(f"Error in similarity matching: {str(e)}")
+            # Continue with basic suggestion if similarity matching fails
+
+        # If similarity matching failed, return empty suggestions and new project option
+        return {
+            "suggestions": [],
+            "new_project": {
+                "name": title[:50] if title else "New Project",
+                "description": content[:200] + "..." if len(content) > 200 else content
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error in suggest project endpoint: {str(e)}")
+        # Return empty suggestions and basic new project suggestion if everything fails
+        return {
+            "suggestions": [],
+            "new_project": {
+                "name": "New Project",
+                "description": "Project created from text content"
+            }
+        }
 
 if __name__ == "__main__":
     import uvicorn
