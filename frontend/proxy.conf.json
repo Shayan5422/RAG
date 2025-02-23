@@ -15,5 +15,13 @@
     "target": "${API_URL}",
     "secure": false,
     "changeOrigin": true
+  },
+  "/neurocorengine/*": {
+    "target": "https://neurocorengine.com",
+    "secure": true,
+    "changeOrigin": true,
+    "pathRewrite": {
+      "^/neurocorengine": ""
+    }
   }
 } 
