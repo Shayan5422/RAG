@@ -1634,11 +1634,13 @@ async def get_folders(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found or access denied")
 
-    query = db.query(Folder).filter(
-        Folder.project_id == project_id,
-        Folder.parent_folder_id == parent_folder_id
-    )
-    folders = query.all()
+    if parent_folder_id is None:
+        folders = db.query(Folder).filter(Folder.project_id == project_id).all()
+    else:
+        folders = db.query(Folder).filter(
+            Folder.project_id == project_id,
+            Folder.parent_folder_id == parent_folder_id
+        ).all()
     return folders
 
 @app.put("/projects/{project_id}/folders/{folder_id}")

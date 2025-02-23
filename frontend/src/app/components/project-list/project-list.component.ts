@@ -118,7 +118,7 @@ interface SelectedItem {
                     </button>
                     <button (click)="deleteProject(proj, $event)" 
                             class="text-gray-500 hover:text-red-500 p-1"
-                            *ngIf="proj.user_id === currentUserId">
+                            *ngIf="proj.user_id === currentUserId || proj.owner_id === currentUserId">
                       <i class="pi pi-trash"></i>
                     </button>
                   </div>
@@ -812,7 +812,7 @@ interface SelectedItem {
           <input type="text" [(ngModel)]="newFolder.name"
                  class="w-full px-3 py-2 border rounded">
         </div>
-        <div class="mb-4" *ngIf="folderStructure.length > 0">
+        <div class="mb-4" *ngIf="flattenedFolders.length > 0">
           <label class="block text-gray-700 text-sm font-bold mb-2">Parent Folder (Optional)</label>
           <select [(ngModel)]="newFolder.parent_folder_id"
                   class="w-full px-3 py-2 border rounded">
@@ -1015,6 +1015,21 @@ export class ProjectListComponent implements OnInit {
   uploadProgress = 0;
   uploadError: string | null = null;
   allowedFileTypes = ['.pdf', '.doc', '.docx', '.txt'];
+
+  // Getter to provide a flattened list of folders with indentation level
+  get flattenedFolders(): { folder: FolderWithItems, level: number }[] {
+    const result: { folder: FolderWithItems, level: number }[] = [];
+    const traverse = (folders: FolderWithItems[], level: number) => {
+      for (const folder of folders) {
+        result.push({ folder, level });
+        if (folder.folders && folder.folders.length > 0) {
+          traverse(folder.folders, level + 1);
+        }
+      }
+    };
+    traverse(this.folderStructure, 0);
+    return result;
+  }
 
   constructor(
     private projectService: ProjectService,
@@ -1910,6 +1925,13 @@ export class ProjectListComponent implements OnInit {
   // Folder-related methods
   createFolder(): void {
     if (!this.selectedProject || !this.newFolder.name) return;
+
+    // Set parent_folder_id based on currently selected folder (if any)
+    if (this.currentFolder) {
+      this.newFolder.parent_folder_id = this.currentFolder.id;
+    } else {
+      this.newFolder.parent_folder_id = null;
+    }
 
     this.http.post<Folder>(
       `http://localhost:8000/projects/${this.selectedProject.id}/folders`,
