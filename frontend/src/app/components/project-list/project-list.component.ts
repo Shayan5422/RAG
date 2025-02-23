@@ -1512,17 +1512,20 @@ export class ProjectListComponent implements OnInit {
             // Update existing text
             if (this.editor) {
               const quill = this.editor.quillEditor;
-              const existingContent = this.selectedText.content || '';
               const newTranscribedText = response.content || '';
               
-              let textToAdd = newTranscribedText;
-              if (existingContent && !existingContent.endsWith('\n')) {
-                textToAdd = '\n' + textToAdd;
+              // Get current cursor position
+              const range = quill.getSelection();
+              const position = range ? range.index : quill.getLength() - 1;
+              
+              // Insert text at cursor position or end
+              if (position > 0) {
+                quill.insertText(position, '\n\n' + newTranscribedText);
+              } else {
+                quill.setText(newTranscribedText);
               }
               
-              const length = quill.getLength();
-              quill.insertText(length - 1, textToAdd);
-              
+              // Update the text content
               this.selectedText.content = quill.getText();
               
               // Update the text in the project texts array
@@ -1533,22 +1536,28 @@ export class ProjectListComponent implements OnInit {
                   content: this.selectedText.content
                 };
               }
+              
+              // Save the changes
+              this.autoSaveText();
             }
           } else {
             // New text creation
             if (this.newTextEditor) {
               const quill = this.newTextEditor.quillEditor;
-              const existingContent = this.newTextContent.content || '';
               const newTranscribedText = response.content || '';
               
-              let textToAdd = newTranscribedText;
-              if (existingContent && !existingContent.endsWith('\n')) {
-                textToAdd = '\n' + textToAdd;
+              // Get current cursor position
+              const range = quill.getSelection();
+              const position = range ? range.index : quill.getLength() - 1;
+              
+              // Insert text at cursor position or end
+              if (position > 0) {
+                quill.insertText(position, '\n\n' + newTranscribedText);
+              } else {
+                quill.setText(newTranscribedText);
               }
               
-              const length = quill.getLength();
-              quill.insertText(length - 1, textToAdd);
-              
+              // Update the content
               this.newTextContent.content = quill.getText();
             }
           }
@@ -1558,9 +1567,14 @@ export class ProjectListComponent implements OnInit {
             const editor = this.selectedText ? this.editor : this.newTextEditor;
             if (editor) {
               const quill = editor.quillEditor;
-              const newLength = quill.getLength();
-              quill.setSelection(newLength - 1, 0);
-              const editorElement = document.querySelector('.ql-editor');
+              quill.focus();
+              
+              // Move cursor to end
+              const length = quill.getLength();
+              quill.setSelection(length, 0);
+              
+              // Scroll editor to bottom
+              const editorElement = quill.container.querySelector('.ql-editor');
               if (editorElement) {
                 editorElement.scrollTop = editorElement.scrollHeight;
               }
