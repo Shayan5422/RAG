@@ -17,6 +17,11 @@ import base64
 import json
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+import asyncio
 
 from extract_text import extract_text_from_pdf
 from embeding import (
@@ -49,6 +54,9 @@ logger = logging.getLogger(__name__)
 embeddings = HuggingFaceEmbeddings(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
+
+# Dictionary to store background tasks
+background_tasks = {}
 
 # Create the FastAPI app
 app = FastAPI()
@@ -1865,6 +1873,190 @@ async def ask_folder_question(
     except Exception as e:
         logger.error(f"Error in folder question endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+def generate_summary_pdf(project_name: str, summary: str, file_summaries: list, output_dir: str = "uploads") -> str:
+    # Create unique filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"summary_{timestamp}.pdf"
+    filepath = os.path.join(output_dir, filename)
+    
+    # Create PDF document
+    doc = SimpleDocTemplate(filepath, pagesize=letter)
+    styles = getSampleStyleSheet()
+    
+    # Create custom styles
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=30
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        spaceAfter=20
+    )
+    content_style = ParagraphStyle(
+        'CustomBody',
+        parent=styles['Normal'],
+        fontSize=11,
+        spaceAfter=15
+    )
+    
+    # Build PDF content
+    story = []
+    
+    # Add title
+    story.append(Paragraph(f"Content Summary Report - {project_name}", title_style))
+    story.append(Spacer(1, 20))
+    
+    # Add overall summary
+    story.append(Paragraph("Overall Summary", heading_style))
+    story.append(Paragraph(summary, content_style))
+    story.append(PageBreak())
+    
+    # Add individual file summaries
+    story.append(Paragraph("Individual File Summaries", heading_style))
+    for file_summary in file_summaries:
+        parts = file_summary.split("\n", 1)
+        if len(parts) == 2:
+            file_name, content = parts
+            story.append(Paragraph(file_name, heading_style))
+            story.append(Paragraph(content, content_style))
+            story.append(Spacer(1, 20))
+    
+    # Generate PDF
+    doc.build(story)
+    return f"/uploads/{filename}"
+
+@app.post("/summarize")
+async def summarize_content(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    payload = await request.json()
+    project_id = payload.get("project_id")
+    folder_id = payload.get("folder_id")
+
+    if not project_id:
+        raise HTTPException(status_code=400, detail="Project id is required")
+
+    # Verify project access (owned or shared)
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        ((Project.user_id == current_user.id) |
+         Project.id.in_(db.query(ProjectShare.project_id).filter(ProjectShare.user_id == current_user.id)))
+    ).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    # Create a unique task ID for this summarization
+    task_id = f"summarize_{project_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    async def process_files():
+        try:
+            files = []
+            if folder_id:
+                documents = db.query(Document).filter(
+                    Document.project_id == project_id,
+                    Document.folder_id == folder_id
+                ).all()
+                texts = db.query(UserText).filter(UserText.folder_id == folder_id).all()
+            else:
+                documents = db.query(Document).filter(Document.project_id == project_id).all()
+                texts = db.query(UserText).join(TextProjectAssociation).filter(TextProjectAssociation.project_id == project_id).all()
+
+            for doc in documents:
+                if doc.content and doc.content.strip():
+                    files.append((doc.name, doc.content.strip()))
+            for text in texts:
+                if text.content and text.content.strip():
+                    file_name = text.title if text.title else "Text"
+                    files.append((file_name, text.content.strip()))
+
+            if not files:
+                return {"error": "No content found to summarize"}
+
+            llm = load_local_llm()
+            if not llm:
+                return {"error": "Failed to load language model"}
+
+            file_summaries = []
+            for file_name, content in files:
+                try:
+                    prompt = f"Please provide a comprehensive summary of the following content. Focus on key points and main ideas:\n\n{content}\n\nSummary:"
+                    result = llm(prompt)
+                    summary_text = result if isinstance(result, str) else str(result)
+                    if summary_text:
+                        file_summaries.append(f"{file_name} Summary:\n{summary_text.strip()}")
+                except Exception as e:
+                    logger.error(f"Error summarizing file {file_name}: {str(e)}")
+                    continue
+
+            if not file_summaries:
+                return {"error": "Failed to generate any file summaries"}
+
+            combined_summary_text = "\n\n".join(file_summaries)
+            final_prompt = f"Based on these individual file summaries, provide a comprehensive overview that connects and synthesizes the main points:\n\n{combined_summary_text}\n\nFinal Overview:"
+            final_result = llm(final_prompt)
+            final_summary = final_result if isinstance(final_result, str) else str(final_result)
+
+            # Generate PDF
+            pdf_path = generate_summary_pdf(
+                project_name=project.name,
+                summary=final_summary.strip(),
+                file_summaries=file_summaries
+            )
+
+            # Create a new Document record for the PDF
+            summary_document = Document(
+                name=f"Summary Report - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                file_path=pdf_path,
+                project_id=project_id,
+                folder_id=folder_id if folder_id else None,
+                content=f"Overall Summary:\n{final_summary.strip()}\n\nDetailed Summaries:\n{combined_summary_text}"
+            )
+            db.add(summary_document)
+            db.commit()
+            db.refresh(summary_document)
+
+            return {
+                "status": "completed",
+                "summary": final_summary.strip(),
+                "file_summaries": file_summaries,
+                "total_files": len(files),
+                "summarized_files": len(file_summaries),
+                "pdf_url": pdf_path,
+                "document_id": summary_document.id
+            }
+        except Exception as e:
+            logger.error(f"Error in summarization task: {str(e)}")
+            return {"error": str(e)}
+
+    # Store the task
+    background_tasks[task_id] = asyncio.create_task(process_files())
+    
+    return {"task_id": task_id}
+
+@app.get("/summarize/{task_id}/status")
+async def get_summarize_status(task_id: str):
+    task = background_tasks.get(task_id)
+    if not task:
+        return {"status": "not_found"}
+    
+    if task.done():
+        result = task.result()
+        background_tasks.pop(task_id, None)  # Clean up completed task
+        return result
+    
+    return {"status": "processing"}
+
+@app.delete("/summarize/{task_id}")
+async def cancel_summarize(task_id: str):
+    task = background_tasks.get(task_id)
+    if task and not task.done():
+        task.cancel()
+        background_tasks.pop(task_id, None)
+        return {"status": "cancelled"}
+    return {"status": "not_found"}
 
 if __name__ == "__main__":
     import uvicorn

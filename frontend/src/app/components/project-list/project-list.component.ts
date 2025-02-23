@@ -284,21 +284,39 @@ interface SelectedItem {
 
         <!-- Action Buttons -->
         <div class="p-4 border-t flex-shrink-0" *ngIf="selectedProject">
-          <div class="grid grid-cols-2 gap-2">
+          <div class="grid grid-cols-3 gap-2">
             <button (click)="createText()"
                     class="bg-green-500 text-white p-3 rounded-lg hover:bg-green-600 flex items-center justify-center group relative">
-              <i class="pi pi-file-edit text-xl"></i>
+              <i class="pi pi-file-edit"></i>
               <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                 New Text
               </span>
             </button>
             <button (click)="showUploadFile = true"
                     class="bg-purple-500 text-white p-3 rounded-lg hover:bg-purple-600 flex items-center justify-center group relative">
-              <i class="pi pi-upload text-xl"></i>
+              <i class="pi pi-upload"></i>
               <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
                 Upload File
               </span>
             </button>
+            <button (click)="isSummarizing ? cancelSummarize() : summarizeContent()"
+                    [class.bg-red-500]="isSummarizing"
+                    [class.hover:bg-red-600]="isSummarizing"
+                    [class.bg-orange-500]="!isSummarizing"
+                    [class.hover:bg-orange-600]="!isSummarizing"
+                    class="text-white p-3 rounded-lg flex items-center justify-center group relative">
+              <i class="pi" [ngClass]="{'pi-times': isSummarizing, 'pi-comment': !isSummarizing}"></i>
+              <span class="absolute bottom-full mb-2 bg-black text-white text-xs py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                {{isSummarizing ? 'Cancel Summarization' : 'Summarize Content'}}
+              </span>
+            </button>
+          </div>
+          <div *ngIf="summarizeStatus" class="mt-2 text-sm" [ngClass]="{
+            'text-blue-600': summarizeStatus.includes('Processing'),
+            'text-green-600': summarizeStatus.includes('Completed'),
+            'text-red-600': summarizeStatus.includes('Error') || summarizeStatus.includes('cancelled')
+          }">
+            {{ summarizeStatus }}
           </div>
         </div>
       </div>
@@ -1020,6 +1038,12 @@ export class ProjectListComponent implements OnInit {
   uploadProgress = 0;
   uploadError: string | null = null;
   allowedFileTypes = ['.pdf', '.doc', '.docx', '.txt'];
+
+  // Add these properties to the component class
+  isSummarizing: boolean = false;
+  summarizeStatus: string = '';
+  currentSummarizeTaskId: string | null = null;
+  statusCheckInterval: any;
 
   // Getter to provide a flattened list of folders with indentation level
   get flattenedFolders(): { folder: FolderWithItems, level: number }[] {
@@ -2211,5 +2235,171 @@ export class ProjectListComponent implements OnInit {
       }
       this.currentFolder = this.folderForwardStack.pop()!;
     }
+  }
+
+  summarizeContent(): void {
+    if (!this.selectedProject) return;
+    
+    this.isSummarizing = true;
+    this.summarizeStatus = "Starting summarization process...";
+    
+    const payload: any = { 
+      project_id: this.selectedProject.id 
+    };
+    if (this.currentFolder) {
+      payload.folder_id = this.currentFolder.id;
+    }
+
+    // Start the summarization process
+    this.http.post<any>('http://localhost:8000/summarize', payload).subscribe({
+      next: (response) => {
+        if (response.task_id) {
+          this.currentSummarizeTaskId = response.task_id;
+          this.checkSummarizeStatus();
+        } else {
+          this.handleError("No task ID received");
+        }
+      },
+      error: (error) => this.handleError(error)
+    });
+  }
+
+  // Add method to check summarization status
+  private checkSummarizeStatus(): void {
+    if (!this.currentSummarizeTaskId) return;
+
+    this.statusCheckInterval = setInterval(() => {
+      this.http.get<any>(`http://localhost:8000/summarize/${this.currentSummarizeTaskId}/status`).subscribe({
+        next: (response) => {
+          if (response.status === 'processing') {
+            this.summarizeStatus = "Processing files...";
+          } else if (response.status === 'completed' || response.error || response.pdf_url) {
+            clearInterval(this.statusCheckInterval);
+            this.handleSummarizeComplete(response);
+          }
+        },
+        error: (error) => {
+          clearInterval(this.statusCheckInterval);
+          this.handleError(error);
+        }
+      });
+    }, 2000); // Check every 2 seconds
+  }
+
+  // Add method to cancel summarization
+  cancelSummarize(): void {
+    if (this.currentSummarizeTaskId) {
+      this.http.delete<any>(`http://localhost:8000/summarize/${this.currentSummarizeTaskId}`).subscribe({
+        next: () => {
+          clearInterval(this.statusCheckInterval);
+          this.summarizeStatus = "Summarization cancelled.";
+          this.isSummarizing = false;
+          this.currentSummarizeTaskId = null;
+        },
+        error: (error) => this.handleError(error)
+      });
+    }
+  }
+
+  // Add method to handle completion
+  private handleSummarizeComplete(response: any): void {
+    this.isSummarizing = false;
+    this.currentSummarizeTaskId = null;
+
+    if (response.error) {
+      this.summarizeStatus = "Error: " + response.error;
+      return;
+    }
+
+    this.summarizeStatus = `Completed summarizing ${response.summarized_files} of ${response.total_files} files`;
+
+    // Create a modal to show options and preview
+    if (response.pdf_url) {
+      const modal = document.createElement('div');
+      modal.style.position = 'fixed';
+      modal.style.top = '0';
+      modal.style.left = '0';
+      modal.style.width = '100%';
+      modal.style.height = '100%';
+      modal.style.backgroundColor = 'rgba(0,0,0,0.7)';
+      modal.style.zIndex = '1000';
+      modal.style.display = 'flex';
+      modal.style.flexDirection = 'column';
+      modal.style.alignItems = 'center';
+      modal.style.justifyContent = 'center';
+
+      const contentBox = document.createElement('div');
+      contentBox.style.backgroundColor = 'white';
+      contentBox.style.padding = '20px';
+      contentBox.style.borderRadius = '8px';
+      contentBox.style.maxWidth = '600px';
+      contentBox.style.width = '90%';
+      contentBox.style.textAlign = 'center';
+
+      const title = document.createElement('h2');
+      title.textContent = 'Summary Generated Successfully';
+      title.style.marginBottom = '20px';
+
+      const message = document.createElement('p');
+      message.textContent = 'The summary has been saved to your project and can be accessed like any other document.';
+      message.style.marginBottom = '20px';
+      message.style.color = '#4a5568';
+
+      const buttonContainer = document.createElement('div');
+      buttonContainer.style.display = 'flex';
+      buttonContainer.style.justifyContent = 'center';
+      buttonContainer.style.gap = '10px';
+      buttonContainer.style.marginBottom = '20px';
+
+      // Open in New Tab button
+      const openButton = document.createElement('button');
+      openButton.textContent = 'Open in New Tab';
+      openButton.className = 'bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600';
+      openButton.onclick = () => {
+        window.open(`http://localhost:8000${response.pdf_url}`, '_blank');
+      };
+
+      // Download button
+      const downloadButton = document.createElement('button');
+      downloadButton.textContent = 'Download PDF';
+      downloadButton.className = 'bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600';
+      downloadButton.onclick = () => {
+        const link = document.createElement('a');
+        link.href = `http://localhost:8000${response.pdf_url}`;
+        link.download = response.pdf_url.split('/').pop() || 'summary.pdf';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      };
+
+      // Close button
+      const closeButton = document.createElement('button');
+      closeButton.textContent = 'Close';
+      closeButton.className = 'bg-gray-500 text-white px-4 py-2 rounded hover:bg-gray-600';
+      closeButton.onclick = () => {
+        document.body.removeChild(modal);
+        // Refresh the project content to show the new summary document
+        this.refreshProjectContent();
+      };
+
+      buttonContainer.appendChild(openButton);
+      buttonContainer.appendChild(downloadButton);
+      buttonContainer.appendChild(closeButton);
+
+      contentBox.appendChild(title);
+      contentBox.appendChild(message);
+      contentBox.appendChild(buttonContainer);
+      modal.appendChild(contentBox);
+      document.body.appendChild(modal);
+    }
+  }
+
+  // Add error handling method
+  private handleError(error: any): void {
+    console.error("Error in summarization:", error);
+    this.summarizeStatus = "Error: " + (error.error?.detail || error.message || "Unknown error");
+    this.isSummarizing = false;
+    this.currentSummarizeTaskId = null;
+    clearInterval(this.statusCheckInterval);
   }
 } 
