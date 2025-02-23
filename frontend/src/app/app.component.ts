@@ -4,11 +4,13 @@ import { RouterModule, Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { ProjectService, Project } from './services/project.service';
 import { TextService, UserText } from './services/text.service';
+import { FontAwesomeModule } from '@fortawesome/angular-fontawesome';
+import { faSignInAlt, faUserPlus, faSignOutAlt } from '@fortawesome/free-solid-svg-icons';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, RouterModule, FormsModule],
+  imports: [CommonModule, RouterModule, FormsModule, FontAwesomeModule],
   template: `
     <!-- Navigation Bar -->
     <nav class="bg-white shadow-lg">
@@ -22,18 +24,21 @@ import { TextService, UserText } from './services/text.service';
           <div class="flex items-center">
             <ng-container *ngIf="!isLoggedIn()">
               <a routerLink="/login" 
-                 class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2">
-                Login
+                 class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 mr-2 flex items-center"
+                 title="Login">
+                <fa-icon [icon]="faSignInAlt" size="lg"></fa-icon>
               </a>
               <a routerLink="/register" 
-                 class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">
-                Register
+                 class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600 flex items-center"
+                 title="Register">
+                <fa-icon [icon]="faUserPlus" size="lg"></fa-icon>
               </a>
             </ng-container>
             <button *ngIf="isLoggedIn()" 
                     (click)="logout()"
-                    class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">
-              Logout
+                    class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600 flex items-center"
+                    title="Logout">
+              <fa-icon [icon]="faSignOutAlt" size="lg"></fa-icon>
             </button>
           </div>
         </div>
@@ -45,6 +50,11 @@ import { TextService, UserText } from './services/text.service';
   styles: []
 })
 export class AppComponent implements OnInit {
+  // Font Awesome Icons
+  faSignInAlt = faSignInAlt;
+  faUserPlus = faUserPlus;
+  faSignOutAlt = faSignOutAlt;
+
   // Projects
   projects: Project[] = [];
   selectedProject: Project | null = null;

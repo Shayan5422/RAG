@@ -555,23 +555,92 @@ interface SelectedItem {
 
     <!-- Upload File Modal -->
     <div *ngIf="showUploadFile" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-      <div class="bg-white rounded-lg p-6 w-96">
-        <h2 class="text-xl font-bold mb-4">Upload Document</h2>
-        <div class="mb-4">
-          <input type="file" 
-                 (change)="onFileSelected($event)"
-                 accept=".pdf,.doc,.docx,.txt"
-                 class="w-full">
+      <div class="bg-white rounded-lg p-6 w-[500px] max-w-full mx-4">
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-xl font-bold">Upload Document</h2>
+          <button (click)="showUploadFile = false" class="text-gray-500 hover:text-gray-700">
+            <i class="pi pi-times"></i>
+          </button>
         </div>
+
+        <!-- Drag & Drop Area -->
+        <div
+          class="border-2 border-dashed rounded-lg p-8 mb-6 text-center transition-all duration-200"
+          [class.border-blue-400]="!isDragging"
+          [class.border-blue-600]="isDragging"
+          [class.bg-blue-50]="isDragging"
+          (dragover)="onDragOver($event)"
+          (dragleave)="onDragLeave($event)"
+          (drop)="onDrop($event)">
+          
+          <div class="flex flex-col items-center justify-center space-y-4">
+            <i class="pi pi-cloud-upload text-4xl" [class.text-blue-400]="!isDragging" [class.text-blue-600]="isDragging"></i>
+            
+            <div class="text-gray-600">
+              <p class="text-lg mb-2">Drag & drop your file here</p>
+              <p class="text-sm">or</p>
+            </div>
+
+            <label class="cursor-pointer bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+              Browse Files
+              <input type="file" 
+                     (change)="onFileSelected($event)"
+                     accept=".pdf,.doc,.docx,.txt"
+                     class="hidden">
+            </label>
+
+            <p class="text-sm text-gray-500">
+              Supported files: PDF, DOC, DOCX, TXT (max 50MB)
+            </p>
+          </div>
+        </div>
+
+        <!-- Selected File Preview -->
+        <div *ngIf="selectedFile" class="mb-6 p-4 bg-gray-50 rounded-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+              <i class="pi" [class.pi-file-pdf]="selectedFile.name.toLowerCase().endsWith('.pdf')"
+                         [class.pi-file-word]="selectedFile.name.toLowerCase().endsWith('.doc') || selectedFile.name.toLowerCase().endsWith('.docx')"
+                         [class.pi-file-text]="selectedFile.name.toLowerCase().endsWith('.txt')"></i>
+              <div>
+                <p class="font-medium truncate">{{selectedFile.name}}</p>
+                <p class="text-sm text-gray-500">{{(selectedFile.size / 1024 / 1024).toFixed(2)}} MB</p>
+              </div>
+            </div>
+            <button (click)="selectedFile = null" class="text-red-500 hover:text-red-700">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Error Message -->
+        <div *ngIf="uploadError" class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          <div class="flex items-center space-x-2">
+            <i class="pi pi-exclamation-circle"></i>
+            <p>{{uploadError}}</p>
+          </div>
+        </div>
+
+        <!-- Upload Progress -->
+        <div *ngIf="uploadProgress > 0 && uploadProgress < 100" class="mb-6">
+          <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+            <div class="h-full bg-blue-500 transition-all duration-300"
+                 [style.width.%]="uploadProgress"></div>
+          </div>
+          <p class="text-sm text-gray-600 mt-2 text-center">Uploading... {{uploadProgress}}%</p>
+        </div>
+
+        <!-- Action Buttons -->
         <div class="flex justify-end gap-2">
           <button (click)="showUploadFile = false"
-                  class="px-4 py-2 border rounded">
+                  class="px-4 py-2 border rounded-lg hover:bg-gray-50">
             Cancel
           </button>
           <button (click)="uploadFile()"
-                  [disabled]="!selectedFile"
-                  class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 disabled:bg-gray-400">
-            Upload
+                  [disabled]="!selectedFile || uploadProgress > 0"
+                  class="bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center space-x-2">
+            <i class="pi pi-upload"></i>
+            <span>Upload</span>
           </button>
         </div>
       </div>
@@ -941,6 +1010,12 @@ export class ProjectListComponent implements OnInit {
     updated_at: ''
   };
 
+  // File upload properties
+  isDragging = false;
+  uploadProgress = 0;
+  uploadError: string | null = null;
+  allowedFileTypes = ['.pdf', '.doc', '.docx', '.txt'];
+
   constructor(
     private projectService: ProjectService,
     private textService: TextService,
@@ -1155,9 +1230,50 @@ export class ProjectListComponent implements OnInit {
   }
 
   onFileSelected(event: any): void {
-    const file = event.target.files[0];
-    if (file) {
-      this.selectedFile = file;
+    const files = event.target.files;
+    if (files.length > 0) {
+      this.handleFileSelection(files[0]);
+    }
+  }
+
+  handleFileSelection(file: File): void {
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase();
+    if (!this.allowedFileTypes.includes(fileExtension)) {
+      this.uploadError = `Invalid file type. Allowed types: ${this.allowedFileTypes.join(', ')}`;
+      this.selectedFile = null;
+      return;
+    }
+    
+    if (file.size > 50 * 1024 * 1024) { // 50MB limit
+      this.uploadError = 'File size must be less than 50MB';
+      this.selectedFile = null;
+      return;
+    }
+
+    this.selectedFile = file;
+    this.uploadError = null;
+  }
+
+  onDragOver(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragging = true;
+  }
+
+  onDragLeave(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragging = false;
+  }
+
+  onDrop(event: DragEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.isDragging = false;
+    
+    const files = event.dataTransfer?.files;
+    if (files && files.length > 0) {
+      this.handleFileSelection(files[0]);
     }
   }
 
@@ -1170,18 +1286,29 @@ export class ProjectListComponent implements OnInit {
       formData.append('folder_id', this.currentFolder.id.toString());
     }
 
-    this.projectService.uploadDocument(
+    // Reset progress and error
+    this.uploadProgress = 0;
+    this.uploadError = null;
+
+    // Create HTTP request with progress tracking
+    const upload$ = this.projectService.uploadDocument(
       this.selectedProject.id,
       this.selectedFile,
       this.currentFolder?.id
-    ).subscribe({
+    );
+
+    // Subscribe to the upload
+    upload$.subscribe({
       next: () => {
         this.showUploadFile = false;
         this.selectedFile = null;
+        this.uploadProgress = 0;
         this.refreshProjectContent();
       },
       error: (error) => {
         console.error('Error uploading document:', error);
+        this.uploadError = 'Failed to upload file. Please try again.';
+        this.uploadProgress = 0;
       }
     });
   }

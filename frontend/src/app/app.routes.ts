@@ -16,11 +16,7 @@ export const routes: Routes = [
     loadComponent: () => import('./components/text-editor/text-editor.component').then(m => m.TextEditorComponent),
     canActivate: [AuthGuard]
   },
-  {
-    path: 'upload',
-    loadComponent: () => import('./components/upload/upload.component').then(m => m.UploadComponent),
-    canActivate: [AuthGuard]
-  },
+  
   {
     path: 'projects',
     component: ProjectListComponent,
