@@ -1,5 +1,5 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,11 +18,14 @@ import json
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 import asyncio
 from dotenv import load_dotenv
+from PyPDF2 import PdfMerger
+import io
 
 # Load environment variables
 load_dotenv()
@@ -2064,6 +2067,206 @@ async def cancel_summarize(task_id: str):
         background_tasks.pop(task_id, None)
         return {"status": "cancelled"}
     return {"status": "not_found"}
+
+@app.post("/projects/{project_id}/export")
+async def export_project_content(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check project access
+    project = db.query(Project).filter(
+        (Project.id == project_id) &
+        (
+            (Project.user_id == current_user.id) |
+            Project.id.in_(
+                db.query(ProjectShare.project_id)
+                .filter(ProjectShare.user_id == current_user.id)
+            )
+        )
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    try:
+        # Create export directory if it doesn't exist
+        export_dir = Path("exports")
+        export_dir.mkdir(exist_ok=True)
+        
+        # Create unique filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"project_export_{timestamp}.pdf"
+        
+        # Create PDF merger
+        merger = PdfMerger()
+        
+        # Create temporary cover page
+        cover_path = export_dir / f"cover_{timestamp}.pdf"
+        
+        # Create cover page with project info
+        pdf_doc = SimpleDocTemplate(
+            str(cover_path),
+            pagesize=letter,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Setup styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1
+        )
+        content_style = ParagraphStyle(
+            'CustomContent',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=15,
+            leading=14
+        )
+        
+        # Create cover page content
+        story = []
+        story.append(Paragraph(f"Project: {project.name}", title_style))
+        if project.description:
+            story.append(Paragraph(project.description, content_style))
+        story.append(Spacer(1, 50))
+        
+        # Build cover page
+        pdf_doc.build(story)
+
+        # Add cover page to merger
+        merger.append(str(cover_path))
+
+        # Function to process folder contents
+        def process_folder_contents(folder_id: Optional[int], level: int = 0):
+            # Add folder title page if it's not root
+            if folder_id is not None:
+                folder = db.query(Folder).filter(Folder.id == folder_id).first()
+                if folder:
+                    folder_title_path = temp_dir / f"folder_{folder.id}_{timestamp}.pdf"
+                    folder_doc = SimpleDocTemplate(
+                        str(folder_title_path),
+                        pagesize=letter,
+                        rightMargin=72,
+                        leftMargin=72,
+                        topMargin=72,
+                        bottomMargin=72
+                    )
+                    
+                    folder_story = []
+                    folder_title = "  " * level + f"[FOLDER] {folder.name}"
+                    folder_story.append(Paragraph(folder_title, title_style))
+                    folder_story.append(Spacer(1, 30))
+                    folder_doc.build(folder_story)
+                    merger.append(str(folder_title_path))
+
+            # Get documents in this folder
+            documents = db.query(Document).filter(
+                Document.project_id == project_id,
+                Document.folder_id == folder_id
+            ).all()
+
+            # Add PDFs from this folder
+            for doc in documents:
+                if doc.file_path and doc.file_path.lower().endswith('.pdf'):
+                    clean_path = doc.file_path.lstrip('/')
+                    pdf_path = Path(clean_path)
+                    if pdf_path.exists():
+                        # Add document title page
+                        doc_title_path = temp_dir / f"doc_title_{doc.id}_{timestamp}.pdf"
+                        doc_title_doc = SimpleDocTemplate(str(doc_title_path), pagesize=letter)
+                        doc_title_story = []
+                        doc_title = "  " * (level + 1) + f"[PDF] {doc.name}"
+                        doc_title_story.append(Paragraph(doc_title, content_style))
+                        doc_title_doc.build(doc_title_story)
+                        merger.append(str(doc_title_path))
+                        # Add actual PDF
+                        merger.append(str(pdf_path))
+
+            # Get texts in this folder
+            texts = db.query(UserText).join(TextProjectAssociation).filter(
+                TextProjectAssociation.project_id == project_id,
+                UserText.folder_id == folder_id
+            ).all()
+
+            # Add texts from this folder
+            for text in texts:
+                if text.content:
+                    text_pdf_path = temp_dir / f"text_{text.id}_{timestamp}.pdf"
+                    text_doc = SimpleDocTemplate(str(text_pdf_path), pagesize=letter)
+                    text_story = []
+                    text_title = "  " * (level + 1) + f"[TEXT] {text.title}"
+                    text_story.append(Paragraph(text_title, content_style))
+                    text_story.append(Spacer(1, 20))
+                    text_story.append(Paragraph(text.content, content_style))
+                    text_doc.build(text_story)
+                    merger.append(str(text_pdf_path))
+
+            # Process subfolders recursively
+            subfolders = db.query(Folder).filter(
+                Folder.project_id == project_id,
+                Folder.parent_folder_id == folder_id
+            ).all()
+
+            for subfolder in subfolders:
+                process_folder_contents(subfolder.id, level + 1)
+
+        # Create a temporary directory for text-to-pdf conversions
+        temp_dir = export_dir / "temp"
+        temp_dir.mkdir(exist_ok=True)
+
+        # Start processing from root level (no folder)
+        process_folder_contents(None)
+
+        # Save the merged PDF
+        output_path = export_dir / filename
+        with open(output_path, 'wb') as output_file:
+            merger.write(output_file)
+
+        # Clean up temporary files
+        if cover_path.exists():
+            cover_path.unlink()
+        # Clean up text PDFs
+        if temp_dir.exists():
+            for temp_file in temp_dir.glob("*.pdf"):
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
+            try:
+                temp_dir.rmdir()
+            except:
+                pass
+        
+        return FileResponse(
+            str(output_path),
+            media_type='application/pdf',
+            filename=filename
+        )
+        
+    except Exception as e:
+        logger.error(f"Error exporting project {project_id}: {str(e)}")
+        # Clean up temporary files in case of error
+        if 'cover_path' in locals() and cover_path.exists():
+            cover_path.unlink()
+        if 'temp_dir' in locals() and temp_dir.exists():
+            for temp_file in temp_dir.glob("*.pdf"):
+                try:
+                    temp_file.unlink()
+                except:
+                    pass
+            try:
+                temp_dir.rmdir()
+            except:
+                pass
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

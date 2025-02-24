@@ -123,6 +123,14 @@ interface SelectedItem {
                       <i class="pi pi-trash"></i>
                     </button>
                   </div>
+                  <button (click)="exportProjectContent(proj.id, $event)" 
+                          class="text-gray-500 hover:text-green-500 p-1"
+                          [disabled]="isExporting">
+                    <i class="pi pi-file-export" 
+                       [class.animate-pulse]="isExporting"
+                       [title]="isExporting ? 'Exporting...' : 'Export to PDF'">
+                    </i>
+                  </button>
                 </div>
               </ng-container>
             </div>
@@ -1047,6 +1055,7 @@ export class ProjectListComponent implements OnInit {
   statusCheckInterval: any;
 
   private apiUrl = environment.apiUrl;
+  isExporting = false;
 
   // Getter to provide a flattened list of folders with indentation level
   get flattenedFolders(): { folder: FolderWithItems, level: number }[] {
@@ -2402,5 +2411,39 @@ export class ProjectListComponent implements OnInit {
     this.isSummarizing = false;
     this.currentSummarizeTaskId = null;
     clearInterval(this.statusCheckInterval);
+  }
+
+  exportProjectContent(projectId: number, event: Event): void {
+    event.stopPropagation(); // Prevent project selection when clicking export
+    if (this.isExporting) return;
+    
+    this.isExporting = true;
+    
+    this.http.post(`${this.apiUrl}/projects/${projectId}/export`, {}, { 
+      responseType: 'blob' 
+    }).subscribe({
+      next: (response: Blob) => {
+        // Create blob link to download
+        const url = window.URL.createObjectURL(response);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `project-export-${new Date().getTime()}.pdf`;
+        
+        // Add link to document and trigger download
+        document.body.appendChild(link);
+        link.click();
+        
+        // Cleanup
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+        this.isExporting = false;
+      },
+      error: (error) => {
+        console.error('Error exporting project:', error);
+        this.isExporting = false;
+        // Show error message to user
+        alert('Failed to export project content. Please try again.');
+      }
+    });
   }
 } 
